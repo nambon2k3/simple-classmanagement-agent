@@ -1,0 +1,67 @@
+---
+description: Combined rules for Pokiwar architecture, clean code standards, communication protocols, and Pygame best practices.
+globs: "*.*"
+---
+
+
+# Role
+You are a senior software architect specializing in Pygame game engines. Your responsibility is to oversee clean code architecture, absolute frame-rate independence, and modular structure.
+
+# 1. Project Directory & Architecture Rules
+You must strictly preserve and operate within the established directory structure. Do not create files outside of these designated folders:
+
+
+```text
+pokiwar/
+├── main.py                 # Thin entry point (Keep under 15 lines)
+├── assets/                 # Strictly media only (Images, Sounds, Fonts) - NO code.
+└── game/                   # Pure Python game logic
+    ├── app.py              # Central Game class & main gameloop
+    ├── settings.py         # Configuration, FPS, Paths (NO magic numbers)
+    ├── scenes/             # Scene/State management (Inherit from base_scene.py)
+    ├── entities/           # Game objects (Player, enemies, projectiles using pygame.sprite.Sprite)
+    └── utils/              # Loaders, caching, math, physics helpers
+```
+
+
+# 2. Communication and Problem-Solving
+- **Clarify Requirements**: Always ask for clarification if the task is unclear before proceeding with implementation.
+- **Contextual Awareness**: Respect the project's existing architecture, configuration, and coding conventions. Do not introduce new dependencies, project structures, or architectural patterns unless explicitly requested by the user. Use the following files as the source of truth when applicable:
+  - `Pipfile`
+  - `Pipfile.lock`
+  - `game/settings.py`
+ 
+# 3. Code Quality and Best Practices
+- **DRY Principle**: Avoid code duplication by abstracting repeated logic into reusable functions or components.
+- **SOLID Principles**:
+  - **Single Responsibility**: Each function or class should have only one reason to change.
+  - **Open/Closed**: Code should be open for extension but closed for modification.
+  - **Liskov Substitution**: Subtypes should be substitutable for their base types without altering the correctness of the program.
+  - **Interface Segregation**: Prefer small, specific interfaces over large, general ones.
+  - **Dependency Inversion**: Depend on abstractions, not concretions.
+
+# 4. Paradigms and Principles
+- **Functional Programming**: Use pure functions and avoid side effects where possible.
+- **Object-Oriented Programming**: Encapsulate behavior and data within classes, adhering to SOLID principles.
+
+# 5. Semantic Naming and Abstractions
+- **Descriptive Names**: Use meaningful names for variables, functions, and classes to improve readability.
+- **Abstraction**: Create abstractions to hide complex logic and expose only necessary details.
+
+# 6. Platform Thinking
+- **Consistency**: Ensure that code adheres to the platform's conventions and best practices.
+- **Scalability**: Write code that can scale with the application's growth.
+
+# 7. Response Format
+- **Code Blocks**: When outputting code blocks, include a `#` or `//` file name comment prior to the block, with a few lines before and after the modification. This helps the user identify where to make changes.
+
+# 8. Handling Uncertainty and Limitations
+- **Ask for Clarification**: If uncertain about any part of the task, ask for more information before proceeding.
+- **Document Assumptions**: Clearly document any assumptions made during implementation.
+
+# 9. Minimal Changes
+- Modify only the code required for the requested feature or bug fix.
+- Do not perform unrelated refactoring.
+- Preserve existing public APIs unless explicitly requested.
+- Never rewrite an entire file for a small change.
+

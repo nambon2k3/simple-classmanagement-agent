@@ -1,0 +1,222 @@
+"""The assistant agent: one user message in, one reply out.
+
+Implements the tool-calling loop against a local Ollama model.  The agent owns
+*conversation* concerns — history, iteration limits, turning API failures into
+something a teacher can read — and nothing else.  It cannot touch the database;
+the only capability it has is asking the registry to run a named tool, and the
+registry validates and authorises every one of those calls.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from app.ai.client import OllamaClient
+from app.ai.memory import ConversationState
+from app.ai.ollama import history_to_messages, split_response
+from app.ai.prompts import build_system_prompt
+from app.ai.tools.registry import ToolContext, ToolRegistry
+from app.core.config import Settings, get_settings
+from app.core.exceptions import AssistantError
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+#: Shown when the model produces no text at all, which should be rare.
+_EMPTY_REPLY_FALLBACK = "Done."
+#: Shown when the model keeps calling tools past the iteration budget.
+_ITERATION_LIMIT_REPLY = (
+    "That turned into more steps than I expected. Could you try asking for one thing at a time?"
+)
+
+
+@dataclass(slots=True)
+class AgentReply:
+    """The outcome of a single user turn."""
+
+    #: Text to send to the teacher.
+    text: str
+    #: Names of the tools that ran, in order.  Useful for logs and tests.
+    tool_calls: list[str] = field(default_factory=list)
+    #: Side-channel data published by handlers, such as an attendance session
+    #: that the Telegram layer should render as an inline keyboard.
+    emitted: dict[str, Any] = field(default_factory=dict)
+    #: Class the conversation ended up focused on.
+    focus_class_id: int | None = None
+    #: Attendance session the conversation ended up focused on.
+    focus_session_id: int | None = None
+
+
+class AssistantAgent:
+    """Runs the model's tool-calling loop for one conversation turn."""
+
+    def __init__(
+        self,
+        client: OllamaClient,
+        registry: ToolRegistry,
+        settings: Settings | None = None,
+    ) -> None:
+        """Wire the agent to its dependencies.
+
+        Args:
+            client: Configured Ollama client.
+            registry: Catalogue of tools the model may call.
+            settings: Configuration for the model name and loop limits.
+        """
+        self._client = client
+        self._registry = registry
+        self._settings = settings or get_settings()
+
+    async def run(
+        self,
+        message: str,
+        *,
+        state: ConversationState,
+        services: Any,
+    ) -> AgentReply:
+        """Handle one user message.
+
+        Args:
+            message: What the teacher typed.
+            state: Live conversation state; its history is read and updated.
+            services: The :class:`~app.services.container.ServiceContainer`
+                bound to the current unit of work.
+
+        Returns:
+            The reply to send, plus anything the tools emitted.
+
+        Raises:
+            AssistantError: Only if Ollama itself is unreachable or
+                misconfigured.  Tool failures never raise; they come back to
+                the model as structured errors.
+        """
+        context = ToolContext(
+            teacher_id=state.teacher_id,
+            services=services,
+            focus_class_id=state.focus_class_id,
+            focus_session_id=state.focus_session_id,
+        )
+        tools = self._registry.to_ollama_tools()
+        instructions = build_system_prompt(state)
+
+        turn_items: list[dict[str, Any]] = [{"role": "user", "content": message}]
+        called: list[str] = []
+        reply_text = ""
+
+        iterations = 0
+        while iterations < self._settings.max_tool_iterations:
+            iterations += 1
+            response = await self._generate(
+                instructions=instructions,
+                history=state.history + turn_items,
+                tools=tools,
+            )
+
+            calls, text = split_response(response)
+            if text:
+                reply_text = text
+
+            if not calls:
+                if text:
+                    turn_items.append({"role": "assistant", "content": text})
+                break
+
+            for call in calls:
+                turn_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call["call_id"],
+                        "name": call["name"],
+                        "arguments": call["arguments"],
+                    }
+                )
+                result = await self._registry.execute(call["name"], call["arguments"], context)
+                called.append(call["name"])
+                turn_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call["call_id"],
+                        "name": call["name"],
+                        "output": json.dumps(result, ensure_ascii=False, default=str),
+                    }
+                )
+        else:
+            logger.warning(
+                "Tool loop hit the iteration limit",
+                extra={"teacher_id": state.teacher_id, "iterations": iterations},
+            )
+            reply_text = reply_text or _ITERATION_LIMIT_REPLY
+
+        state.extend_history(turn_items, limit=self._settings.max_history_items)
+        state.focus_class_id = context.focus_class_id
+        state.focus_session_id = context.focus_session_id
+
+        return AgentReply(
+            text=reply_text or _EMPTY_REPLY_FALLBACK,
+            tool_calls=called,
+            emitted=dict(context.emitted),
+            focus_class_id=context.focus_class_id,
+            focus_session_id=context.focus_session_id,
+        )
+
+    async def _generate(
+        self,
+        *,
+        instructions: str,
+        history: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Call Ollama, translating transport failures.
+
+        Raises:
+            AssistantError: If the server cannot be reached or rejects the request.
+        """
+        messages = history_to_messages(history, system=instructions)
+        attempts = self._settings.ollama_max_retries + 1
+        last_error: Exception | None = None
+
+        for attempt in range(attempts):
+            try:
+                return await self._client.chat(
+                    model=self._settings.ollama_model,
+                    messages=messages,
+                    tools=tools,
+                )
+            except httpx.TimeoutException as exc:
+                logger.warning("Ollama request timed out", extra={"attempt": attempt + 1})
+                last_error = exc
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                logger.exception(
+                    "Ollama HTTP error",
+                    extra={"status": status, "attempt": attempt + 1},
+                )
+                if status >= 500 and attempt + 1 < attempts:
+                    last_error = exc
+                    continue
+                if status == 404:
+                    raise AssistantError(
+                        f"I couldn't find the model '{self._settings.ollama_model}'. "
+                        "Please pull it with Ollama first."
+                    ) from exc
+                raise AssistantError(
+                    "I couldn't reach my language model just now. Please try again in a moment."
+                ) from exc
+            except httpx.HTTPError as exc:
+                logger.exception("Ollama connection error", extra={"attempt": attempt + 1})
+                last_error = exc
+            except Exception as exc:
+                logger.exception("Ollama client error")
+                raise AssistantError(
+                    "My assistant configuration looks wrong. Please tell the administrator."
+                ) from exc
+
+        if isinstance(last_error, httpx.TimeoutException):
+            raise AssistantError("That took too long. Please try again.") from last_error
+        raise AssistantError(
+            "I couldn't reach my language model just now. Please try again in a moment."
+        ) from last_error

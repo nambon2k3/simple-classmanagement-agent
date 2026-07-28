@@ -22,6 +22,7 @@ from app.services.class_service import ClassService
 from app.services.report_service import ReportService
 from app.services.student_service import StudentService
 from app.services.teacher_service import TeacherService
+from app.services.tuition_service import TuitionService
 
 
 @dataclass(eq=False)
@@ -97,4 +98,13 @@ class ServiceContainer:
             self.class_repository,
             self.classes,
             self.students,
+        )
+
+    @cached_property
+    def tuition(self) -> TuitionService:
+        """Tuition fee settings and billing reports."""
+        return TuitionService(
+            self.attendance_repository,
+            self.class_repository,
+            self.classes,
         )

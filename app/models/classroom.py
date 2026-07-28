@@ -43,6 +43,8 @@ class Classroom(IdMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
+    #: Amount charged per student for each day they attend (present or late), in VND.
+    daily_tuition_fee: Mapped[int] = mapped_column(default=0, nullable=False, server_default="0")
 
     teacher: Mapped[Teacher] = relationship(back_populates="classes", lazy="raise_on_sql")
     students: Mapped[list[Student]] = relationship(

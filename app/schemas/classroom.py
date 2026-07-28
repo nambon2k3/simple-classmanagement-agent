@@ -21,6 +21,10 @@ class ClassRead(ToolOutput):
     name: str = Field(description="Class name, for example SE401.")
     description: str | None = Field(default=None, description="Optional free-text description.")
     student_count: int = Field(default=0, description="Number of enrolled students.")
+    daily_tuition_fee: int = Field(
+        default=0,
+        description="Daily tuition in VND charged per student for each attended day.",
+    )
 
 
 # ------------------------------------------------------------ create_class --
@@ -32,6 +36,11 @@ class CreateClassInput(ToolInput):
     name: ClassName = Field(description="Name of the new class, for example 'SE401'.")
     description: ShortText | None = Field(
         default=None, description="Optional description of the class."
+    )
+    daily_tuition_fee: int = Field(
+        default=0,
+        ge=0,
+        description="Optional daily tuition in VND per attended day. Defaults to 0.",
     )
 
     @field_validator("name")
@@ -123,4 +132,10 @@ class ClassInfoOutput(ToolOutput):
     )
     has_open_session: bool = Field(
         default=False, description="Whether an attendance session is currently open."
+    )
+    daily_tuition_fee: int = Field(
+        default=0, description="Daily tuition in VND per attended day."
+    )
+    formatted_daily_tuition_fee: str = Field(
+        description="Human-readable daily tuition, for example '50.000 VND'."
     )

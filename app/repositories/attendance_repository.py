@@ -17,6 +17,12 @@ from app.models.enums import AttendanceSessionStatus, AttendanceStatus
 from app.models.student import Student
 from app.repositories.base import BaseRepository
 
+#: Attendance statuses that incur the daily tuition fee.
+_BILLABLE_STATUSES = (
+    AttendanceStatus.PRESENT,
+    AttendanceStatus.LATE,
+)
+
 
 class AttendanceRepository(BaseRepository[AttendanceSession]):
     """Queries over attendance sessions and their records."""
@@ -272,3 +278,76 @@ class AttendanceRepository(BaseRepository[AttendanceSession]):
         return [
             (record, student, classroom, day) for record, student, classroom, day in result.all()
         ]
+
+    # ----------------------------------------------------------- tuition --
+
+    async def billable_days_per_student(
+        self, class_id: int, start: date, end: date
+    ) -> list[tuple[Student, int]]:
+        """Count attended days per student from completed sessions in a range."""
+        result = await self.session.execute(
+            select(Student, func.count(AttendanceRecord.id))
+            .join(AttendanceRecord, AttendanceRecord.student_id == Student.id)
+            .join(AttendanceSession, AttendanceRecord.session_id == AttendanceSession.id)
+            .where(
+                Student.class_id == class_id,
+                AttendanceSession.class_id == class_id,
+                AttendanceSession.status == AttendanceSessionStatus.COMPLETED,
+                AttendanceSession.session_date >= start,
+                AttendanceSession.session_date <= end,
+                AttendanceRecord.status.in_(_BILLABLE_STATUSES),
+            )
+            .group_by(Student.id)
+            .order_by(Student.full_name)
+        )
+        return [(student, count) for student, count in result.all()]
+
+    async def count_teaching_days_for_class(
+        self, class_id: int, start: date, end: date
+    ) -> int:
+        """Number of completed attendance sessions for one class in a range."""
+        return (
+            await self.session.scalar(
+                select(func.count(AttendanceSession.id)).where(
+                    AttendanceSession.class_id == class_id,
+                    AttendanceSession.status == AttendanceSessionStatus.COMPLETED,
+                    AttendanceSession.session_date >= start,
+                    AttendanceSession.session_date <= end,
+                )
+            )
+        ) or 0
+
+    async def count_teaching_days_for_teacher(
+        self, teacher_id: int, start: date, end: date
+    ) -> int:
+        """Distinct calendar days with a completed session across all classes."""
+        return (
+            await self.session.scalar(
+                select(func.count(func.distinct(AttendanceSession.session_date)))
+                .join(Classroom, AttendanceSession.class_id == Classroom.id)
+                .where(
+                    Classroom.teacher_id == teacher_id,
+                    AttendanceSession.status == AttendanceSessionStatus.COMPLETED,
+                    AttendanceSession.session_date >= start,
+                    AttendanceSession.session_date <= end,
+                )
+            )
+        ) or 0
+
+    async def teaching_days_per_class(
+        self, teacher_id: int, start: date, end: date
+    ) -> list[tuple[str, int]]:
+        """Completed session counts grouped by class name."""
+        result = await self.session.execute(
+            select(Classroom.name, func.count(AttendanceSession.id))
+            .join(AttendanceSession, AttendanceSession.class_id == Classroom.id)
+            .where(
+                Classroom.teacher_id == teacher_id,
+                AttendanceSession.status == AttendanceSessionStatus.COMPLETED,
+                AttendanceSession.session_date >= start,
+                AttendanceSession.session_date <= end,
+            )
+            .group_by(Classroom.id)
+            .order_by(Classroom.name)
+        )
+        return [(name, count) for name, count in result.all()]

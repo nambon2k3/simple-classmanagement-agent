@@ -23,6 +23,8 @@ from app.schemas.classroom import (
     RenameClassInput,
     RenameClassOutput,
 )
+from app.schemas.tuition import SetClassTuitionFeeInput, SetClassTuitionFeeOutput
+from app.utils.money import format_vnd
 
 logger = get_logger(__name__)
 
@@ -105,17 +107,13 @@ class ClassService:
                 teacher_id=teacher_id,
                 name=payload.name,
                 description=payload.description,
+                daily_tuition_fee=payload.daily_tuition_fee,
             )
         )
         logger.info("Class created", extra={"teacher_id": teacher_id, "class_id": classroom.id})
         return CreateClassOutput(
             message=f"Class '{classroom.name}' created.",
-            classroom=ClassRead(
-                id=classroom.id,
-                name=classroom.name,
-                description=classroom.description,
-                student_count=0,
-            ),
+            classroom=_class_read(classroom, student_count=0),
         )
 
     # --------------------------------------------------------------- rename --
@@ -147,12 +145,7 @@ class ClassService:
         )
         return RenameClassOutput(
             message=f"Renamed '{previous_name}' to '{classroom.name}'.",
-            classroom=ClassRead(
-                id=classroom.id,
-                name=classroom.name,
-                description=classroom.description,
-                student_count=student_count,
-            ),
+            classroom=_class_read(classroom, student_count=student_count),
         )
 
     # --------------------------------------------------------------- delete --
@@ -190,15 +183,7 @@ class ClassService:
     async def list_classes(self, teacher_id: int) -> ListClassesOutput:
         """List every class the teacher owns, with student counts."""
         rows = await self._classes.list_with_student_counts(teacher_id)
-        classes = [
-            ClassRead(
-                id=classroom.id,
-                name=classroom.name,
-                description=classroom.description,
-                student_count=count,
-            )
-            for classroom, count in rows
-        ]
+        classes = [_class_read(classroom, student_count=count) for classroom, count in rows]
         return ListClassesOutput(classes=classes, total=len(classes))
 
     async def get_class_info(self, teacher_id: int, payload: ClassInfoInput) -> ClassInfoOutput:
@@ -211,13 +196,46 @@ class ClassService:
         open_session = await self._attendance.get_open_for_class(classroom.id)
 
         return ClassInfoOutput(
-            classroom=ClassRead(
-                id=classroom.id,
-                name=classroom.name,
-                description=classroom.description,
-                student_count=student_count,
-            ),
+            classroom=_class_read(classroom, student_count=student_count),
             total_sessions=total_sessions,
             last_session_date=last_date.isoformat() if last_date else None,
             has_open_session=open_session is not None,
+            daily_tuition_fee=classroom.daily_tuition_fee,
+            formatted_daily_tuition_fee=format_vnd(classroom.daily_tuition_fee),
         )
+
+    async def set_class_tuition_fee(
+        self, teacher_id: int, payload: SetClassTuitionFeeInput
+    ) -> SetClassTuitionFeeOutput:
+        """Set the daily tuition fee charged per attended day for every student."""
+        classroom = await self.resolve(teacher_id, payload.class_name)
+        classroom.daily_tuition_fee = payload.daily_tuition_fee
+        await self._classes.flush()
+        logger.info(
+            "Class tuition fee updated",
+            extra={
+                "teacher_id": teacher_id,
+                "class_id": classroom.id,
+                "daily_tuition_fee": payload.daily_tuition_fee,
+            },
+        )
+        return SetClassTuitionFeeOutput(
+            class_name=classroom.name,
+            daily_tuition_fee=classroom.daily_tuition_fee,
+            formatted_fee=format_vnd(classroom.daily_tuition_fee),
+            message=(
+                f"Daily tuition for '{classroom.name}' is now "
+                f"{format_vnd(classroom.daily_tuition_fee)} per attended day."
+            ),
+        )
+
+
+def _class_read(classroom: Classroom, *, student_count: int) -> ClassRead:
+    """Project a classroom ORM row onto the teacher-facing read model."""
+    return ClassRead(
+        id=classroom.id,
+        name=classroom.name,
+        description=classroom.description,
+        student_count=student_count,
+        daily_tuition_fee=classroom.daily_tuition_fee,
+    )

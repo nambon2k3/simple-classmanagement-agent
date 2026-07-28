@@ -57,6 +57,14 @@ from app.schemas.student import (
     UpdateStudentInput,
     UpdateStudentOutput,
 )
+from app.schemas.tuition import (
+    SetClassTuitionFeeInput,
+    SetClassTuitionFeeOutput,
+    TeachingDaysReportInput,
+    TeachingDaysReportOutput,
+    TuitionReportInput,
+    TuitionReportOutput,
+)
 
 #: Key under which a handler publishes the attendance session it just touched,
 #: so the Telegram layer can render or refresh the inline keyboard.
@@ -198,6 +206,27 @@ async def _students_by_status(
     return await context.services.reports.students_by_status(context.teacher_id, payload)
 
 
+# ------------------------------------------------------------------- tuition --
+
+
+async def _set_class_tuition_fee(
+    context: ToolContext, payload: SetClassTuitionFeeInput
+) -> SetClassTuitionFeeOutput:
+    return await context.services.tuition.set_class_tuition_fee(context.teacher_id, payload)
+
+
+async def _tuition_report(
+    context: ToolContext, payload: TuitionReportInput
+) -> TuitionReportOutput:
+    return await context.services.tuition.tuition_report(context.teacher_id, payload)
+
+
+async def _teaching_days_report(
+    context: ToolContext, payload: TeachingDaysReportInput
+) -> TeachingDaysReportOutput:
+    return await context.services.tuition.teaching_days_report(context.teacher_id, payload)
+
+
 def build_registry() -> ToolRegistry:
     """Create a registry populated with every available tool.
 
@@ -283,7 +312,9 @@ def build_registry() -> ToolRegistry:
         "start_attendance",
         (
             "Open an attendance session for a class so the teacher can start marking "
-            "students. Defaults to today. The bot shows tap-to-mark buttons afterwards."
+            "students. Defaults to today. Also use when the teacher says they are teaching "
+            "or will teach a class today, for example 'today I teach SE401'. The bot shows "
+            "tap-to-mark buttons afterwards."
         ),
         StartAttendanceInput,
         _start_attendance,
@@ -356,6 +387,35 @@ def build_registry() -> ToolRegistry:
         ),
         StudentsByStatusInput,
         _students_by_status,
+    )
+
+    registry.register(
+        "set_class_tuition_fee",
+        (
+            "Set the daily tuition fee for a class in VND. Every student is charged this "
+            "amount for each day they attend (present or late). Absent days are free."
+        ),
+        SetClassTuitionFeeInput,
+        _set_class_tuition_fee,
+    )
+    registry.register(
+        "tuition_report",
+        (
+            "Calculate tuition owed from attendance over a period. Students are charged "
+            "the class daily fee for each attended day; absent days cost nothing. Use for "
+            "'tuition for SE401 this month' or 'how much do students owe in July'."
+        ),
+        TuitionReportInput,
+        _tuition_report,
+    )
+    registry.register(
+        "teaching_days_report",
+        (
+            "Count how many days the teacher held class (completed attendance sessions) "
+            "over a period, broken down by class."
+        ),
+        TeachingDaysReportInput,
+        _teaching_days_report,
     )
 
     return registry

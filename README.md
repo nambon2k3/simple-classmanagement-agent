@@ -162,7 +162,11 @@ summary, or cancel. At most one session exists per class per day.
 day-by-day history), a monthly per-student summary ranked worst-first, and
 "who was absent today / this week".
 
-The twenty tools backing these are registered in
+**Tuition** — set a daily fee per class (VND). Each student is charged that
+fee for every attended day (present or late); absent and excused days are free.
+Ask for tuition totals or teaching-day counts over any period.
+
+The twenty-three tools backing these are registered in
 [`app/ai/tools/definitions.py`](app/ai/tools/definitions.py).
 
 ### Referring to students the way people talk

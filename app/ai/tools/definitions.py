@@ -238,7 +238,11 @@ def build_registry() -> ToolRegistry:
 
     registry.register(
         "create_class",
-        "Create a new class for the teacher. Use when they ask to create, add or open a class.",
+        (
+            "Create a new class for the teacher. Use when they ask to create, add or "
+            "open a class. Pass daily_tuition_fee on this same call when they also "
+            "give a fee — do not use set_class_tuition_fee until the class exists."
+        ),
         CreateClassInput,
         _create_class,
     )
@@ -260,13 +264,20 @@ def build_registry() -> ToolRegistry:
     )
     registry.register(
         "list_classes",
-        "List every class the teacher owns, with student counts.",
+        (
+            "List every class the teacher owns, including student counts and each "
+            "class's daily tuition fee. Use for 'list my classes', 'show classes "
+            "and tuition fees', or 'what fee does each class have'."
+        ),
         ListClassesInput,
         _list_classes,
     )
     registry.register(
         "get_class_info",
-        "Show details about one class, including how many attendance sessions it has.",
+        (
+            "Show details about one named class, including attendance activity and "
+            "its daily tuition fee."
+        ),
         ClassInfoInput,
         _class_info,
     )
@@ -361,8 +372,10 @@ def build_registry() -> ToolRegistry:
     registry.register(
         "attendance_report",
         (
-            "Attendance totals for a class, or for every class, over a period. Use for "
-            "'attendance report for SE401' or 'how was attendance this week'."
+            "Attendance totals (present/absent/late counts) for a class, or for every "
+            "class, over a period. Use for 'attendance report for SE401' or 'how was "
+            "attendance this week'. Not for listing classes or their tuition fees — "
+            "use list_classes for that. Omit class_name to cover every class."
         ),
         AttendanceReportInput,
         _attendance_report,
@@ -401,9 +414,11 @@ def build_registry() -> ToolRegistry:
     registry.register(
         "tuition_report",
         (
-            "Calculate tuition owed from attendance over a period. Students are charged "
-            "the class daily fee for each attended day; absent days cost nothing. Use for "
-            "'tuition for SE401 this month' or 'how much do students owe in July'."
+            "Calculate tuition *owed from attendance* over a period. Students are "
+            "charged the class daily fee for each attended day; absent days cost "
+            "nothing. Use for 'tuition for SE401 this month' or 'how much do "
+            "students owe in July'. To list configured daily fees, use list_classes "
+            "instead."
         ),
         TuitionReportInput,
         _tuition_report,

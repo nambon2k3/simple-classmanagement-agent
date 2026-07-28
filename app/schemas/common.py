@@ -10,7 +10,14 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 #: Class and student names must contain at least one letter or digit; a name
 #: made only of punctuation is a sign the model mis-parsed the message.
@@ -41,6 +48,15 @@ class ToolInput(AppModel):
         str_strip_whitespace=True,
         extra="forbid",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_strings_become_none(cls, data: object) -> object:
+        """Treat ``""`` as omitted — local models often send empty strings for
+        optional fields instead of leaving them out."""
+        if not isinstance(data, dict):
+            return data
+        return {key: (None if value == "" else value) for key, value in data.items()}
 
 
 class ToolOutput(AppModel):

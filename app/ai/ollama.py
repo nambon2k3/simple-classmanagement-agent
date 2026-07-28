@@ -7,8 +7,24 @@ OpenAI-compatible chat messages that Ollama's ``/api/chat`` endpoint expects.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
+
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+#: Local models often wrap a tool payload in markdown fences or prose.
+_FENCE_RE = re.compile(r"```(?:json|javascript|js)?\s*([\s\S]*?)```", re.IGNORECASE)
+#: llama-family models often omit the colon: ``"parameters {"`` → ``"parameters":{``.
+_MISSING_COLON_RE = re.compile(
+    r'"(parameters|arguments|function|properties)"\s*\{',
+)
+_TOOL_NAME_RE = re.compile(r'"name"\s*:\s*"([a-z][a-z0-9_]*)"')
+_CLASS_NAME_RE = re.compile(r'"class_name"\s*:\s*"([^"]+)"')
+_CLASS_NAME_ALT_RE = re.compile(r'"name"\s*:\s*"([^"]+)"')
+_FEE_RE = re.compile(r'"daily_tuition_fee"\s*:\s*(\d+)')
 
 
 def new_call_id(name: str) -> str:
@@ -104,26 +120,215 @@ def split_response(response: dict[str, Any]) -> tuple[list[dict[str, str]], str]
     if calls:
         return calls, text
 
-    # Some local models emit a JSON tool payload in ``content`` instead of
-    # ``tool_calls``; recover when the shape is obvious.
-    if text.startswith("{") and '"name"' in text:
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return [], text
-        name = payload.get("name")
-        if isinstance(name, str) and name:
-            arguments = payload.get("parameters") or payload.get("arguments") or {}
-            if isinstance(arguments, dict):
-                return (
-                    [
-                        {
-                            "call_id": new_call_id(name),
-                            "name": name,
-                            "arguments": json.dumps(arguments, ensure_ascii=False),
-                        }
-                    ],
-                    "",
-                )
+    # Some local models emit a JSON tool payload in ``content`` (sometimes
+    # wrapped in prose or markdown fences) instead of ``tool_calls``.
+    recovered = _recover_tool_calls_from_text(text)
+    if recovered:
+        logger.info(
+            "Recovered tool call from assistant text tool=%s",
+            recovered[0]["name"],
+        )
+        return recovered, ""
 
     return [], text
+
+
+def rewrite_create_class_intent(
+    calls: list[dict[str, str]], user_message: str
+) -> list[dict[str, str]]:
+    """Map a mis-chosen fee update onto ``create_class`` when the teacher asked to create.
+
+    Local models often call ``set_class_tuition_fee`` for "create class X with fee Y"
+    even though the class does not exist yet.
+    """
+    if not calls or not _looks_like_create_class(user_message):
+        return calls
+
+    rewritten: list[dict[str, str]] = []
+    for call in calls:
+        if call["name"] != "set_class_tuition_fee":
+            rewritten.append(call)
+            continue
+        try:
+            args = json.loads(call["arguments"] or "{}")
+        except json.JSONDecodeError:
+            rewritten.append(call)
+            continue
+        if not isinstance(args, dict):
+            rewritten.append(call)
+            continue
+        class_name = args.get("class_name") or args.get("name")
+        if not isinstance(class_name, str) or not class_name.strip():
+            rewritten.append(call)
+            continue
+        new_args: dict[str, Any] = {"name": class_name.strip()}
+        fee = args.get("daily_tuition_fee")
+        if isinstance(fee, int) or (isinstance(fee, str) and fee.isdigit()):
+            new_args["daily_tuition_fee"] = int(fee)
+        logger.info(
+            "Rewrote set_class_tuition_fee → create_class for create intent name=%s",
+            new_args["name"],
+        )
+        rewritten.append(
+            {
+                "call_id": new_call_id("create_class"),
+                "name": "create_class",
+                "arguments": json.dumps(new_args, ensure_ascii=False),
+            }
+        )
+    return rewritten
+
+
+def _looks_like_create_class(message: str) -> bool:
+    """Heuristic: teacher is asking to create/add a new class."""
+    return bool(
+        re.search(
+            r"(?i)\b(create|add|open|new)\b.{0,40}\bclass\b|\bclass\b.{0,20}\b(named|called)\b",
+            message,
+        )
+    )
+
+
+def _recover_tool_calls_from_text(text: str) -> list[dict[str, str]]:
+    """Pull tool-call JSON out of plain content when the model narrated it."""
+    if not text:
+        return []
+
+    candidates = _FENCE_RE.findall(text)
+    candidates.append(text)
+
+    for chunk in candidates:
+        for blob in _iter_json_objects(chunk):
+            call = _tool_call_from_payload(blob)
+            if call is not None:
+                return [call]
+        # Brace matcher may fail on broken JSON; try a repaired whole-chunk parse.
+        call = _tool_call_from_payload(_repair_tool_json(chunk.strip()))
+        if call is not None:
+            return [call]
+        call = _tool_call_from_lenient_text(chunk)
+        if call is not None:
+            return [call]
+    return []
+
+
+def _repair_tool_json(blob: str) -> str:
+    """Fix common local-model JSON mistakes before ``json.loads``."""
+    return _MISSING_COLON_RE.sub(r'"\1":{', blob)
+
+
+def _iter_json_objects(text: str) -> list[str]:
+    """Yield top-level ``{...}`` slices, respecting string escaping."""
+    objects: list[str] = []
+    i = 0
+    length = len(text)
+    while i < length:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        start = i
+        for j in range(i, length):
+            ch = text[j]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    objects.append(text[start : j + 1])
+                    i = j + 1
+                    break
+        else:
+            break
+    return objects
+
+
+def _tool_call_from_payload(blob: str) -> dict[str, str] | None:
+    """Return a normalised tool call when *blob* looks like one."""
+    for candidate in (blob, _repair_tool_json(blob)):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        # OpenAI-ish: {"type":"function","name":"...","parameters":{...}}
+        # Compact: {"name":"...","arguments":{...}}
+        # Nested: {"type":"function","function":{"name":"...","arguments":{...}}}
+        name = payload.get("name")
+        arguments = payload.get("parameters") if "parameters" in payload else payload.get("arguments")
+        nested = payload.get("function")
+        if isinstance(nested, dict):
+            name = nested.get("name") or name
+            if "arguments" in nested:
+                arguments = nested.get("arguments")
+            elif "parameters" in nested:
+                arguments = nested.get("parameters")
+
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if arguments is None:
+            arguments = {}
+        if isinstance(arguments, str):
+            arguments_json = arguments or "{}"
+        elif isinstance(arguments, dict):
+            arguments_json = json.dumps(arguments, ensure_ascii=False)
+        else:
+            continue
+
+        return {
+            "call_id": new_call_id(name),
+            "name": name.strip(),
+            "arguments": arguments_json,
+        }
+    return None
+
+
+def _tool_call_from_lenient_text(text: str) -> dict[str, str] | None:
+    """Last-resort scrape of tool name + common create/fee fields from broken JSON."""
+    names = _TOOL_NAME_RE.findall(text)
+    if not names:
+        return None
+    # Prefer a tool-looking snake_case name that is not a generic field.
+    name = next((n for n in names if "_" in n or n in {"list_classes", "create_class"}), names[0])
+    args: dict[str, Any] = {}
+
+    class_match = _CLASS_NAME_RE.search(text)
+    if class_match:
+        args["class_name"] = class_match.group(1)
+    elif name == "create_class":
+        # Second "name" field is often the class name after the tool name.
+        name_fields = _CLASS_NAME_ALT_RE.findall(text)
+        if len(name_fields) >= 2:
+            args["name"] = name_fields[1]
+        elif len(name_fields) == 1 and name_fields[0] != name:
+            args["name"] = name_fields[0]
+
+    fee_match = _FEE_RE.search(text)
+    if fee_match:
+        args["daily_tuition_fee"] = int(fee_match.group(1))
+
+    if name == "set_class_tuition_fee" and "class_name" not in args and "name" in args:
+        args["class_name"] = args.pop("name")
+
+    if not args and name not in {"list_classes"}:
+        return None
+
+    return {
+        "call_id": new_call_id(name),
+        "name": name,
+        "arguments": json.dumps(args, ensure_ascii=False),
+    }

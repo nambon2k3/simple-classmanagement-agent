@@ -10,6 +10,7 @@ registry validates and authorises every one of those calls.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +18,7 @@ import httpx
 
 from app.ai.client import OllamaClient
 from app.ai.memory import ConversationState
-from app.ai.ollama import history_to_messages, split_response
+from app.ai.ollama import history_to_messages, rewrite_create_class_intent, split_response
 from app.ai.prompts import build_system_prompt
 from app.ai.tools.registry import ToolContext, ToolRegistry
 from app.core.config import Settings, get_settings
@@ -31,6 +32,18 @@ _EMPTY_REPLY_FALLBACK = "Done."
 #: Shown when the model keeps calling tools past the iteration budget.
 _ITERATION_LIMIT_REPLY = (
     "That turned into more steps than I expected. Could you try asking for one thing at a time?"
+)
+#: Shown when the model only narrates a tool call and we cannot recover it.
+_COULD_NOT_RUN_TOOL_REPLY = (
+    "I couldn't run that action just now. Please try again in one short sentence, "
+    "for example: create class Lop7 with tuition fee 50000."
+)
+#: Local models sometimes describe a tool call in prose instead of emitting
+#: ``tool_calls``.
+_NARRATED_TOOL_RE = re.compile(
+    r'(?is)("type"\s*:\s*"function"|I will use the|here\'s how you can do it|'
+    r"call the `|use the `?\w+_?\w*`? function|"
+    r'"name"\s*:\s*"[a-z][a-z0-9_]*")',
 )
 
 
@@ -107,6 +120,12 @@ class AssistantAgent:
         called: list[str] = []
         reply_text = ""
 
+        logger.info(
+            "Model turn started teacher_id=%s message=%s",
+            state.teacher_id,
+            _clip_for_log(message),
+        )
+
         iterations = 0
         while iterations < self._settings.max_tool_iterations:
             iterations += 1
@@ -117,15 +136,56 @@ class AssistantAgent:
             )
 
             calls, text = split_response(response)
+            calls = rewrite_create_class_intent(calls, message)
             if text:
                 reply_text = text
 
             if not calls:
+                if text and _NARRATED_TOOL_RE.search(text):
+                    if called:
+                        # Class/fee may already have been applied; do not undo that
+                        # with a "please try again" after a successful tool round.
+                        logger.info(
+                            "Ignoring narrated follow-up after tools teacher_id=%s",
+                            state.teacher_id,
+                        )
+                        reply_text = (
+                            _message_from_last_tool(turn_items) or _EMPTY_REPLY_FALLBACK
+                        )
+                        break
+                    logger.warning(
+                        "Model narrated a tool call and recovery failed teacher_id=%s reply=%s",
+                        state.teacher_id,
+                        _clip_for_log(text),
+                    )
+                    reply_text = _COULD_NOT_RUN_TOOL_REPLY
+                    break
+
+                logger.info(
+                    "Model decided to reply without tools iteration=%s teacher_id=%s reply=%s",
+                    iterations,
+                    state.teacher_id,
+                    _clip_for_log(text or ""),
+                )
                 if text:
                     turn_items.append({"role": "assistant", "content": text})
                 break
 
+            logger.info(
+                "Model decided to call tools iteration=%s teacher_id=%s tools=%s",
+                iterations,
+                state.teacher_id,
+                [call["name"] for call in calls],
+            )
+
             for call in calls:
+                logger.info(
+                    "Model tool call iteration=%s teacher_id=%s tool=%s arguments=%s",
+                    iterations,
+                    state.teacher_id,
+                    call["name"],
+                    _clip_for_log(call["arguments"]),
+                )
                 turn_items.append(
                     {
                         "type": "function_call",
@@ -136,6 +196,12 @@ class AssistantAgent:
                 )
                 result = await self._registry.execute(call["name"], call["arguments"], context)
                 called.append(call["name"])
+                logger.info(
+                    "Model tool result teacher_id=%s tool=%s outcome=%s",
+                    state.teacher_id,
+                    call["name"],
+                    _summarise_tool_result(result),
+                )
                 turn_items.append(
                     {
                         "type": "function_call_output",
@@ -144,6 +210,9 @@ class AssistantAgent:
                         "output": json.dumps(result, ensure_ascii=False, default=str),
                     }
                 )
+            # After tools run, clear any narrated prose so the final reply comes
+            # from the next model turn (or fallback).
+            reply_text = ""
         else:
             logger.warning(
                 "Tool loop hit the iteration limit",
@@ -220,3 +289,43 @@ class AssistantAgent:
         raise AssistantError(
             "I couldn't reach my language model just now. Please try again in a moment."
         ) from last_error
+
+
+def _clip_for_log(value: Any, *, limit: int = 500) -> str:
+    """Render a value for logs without dumping unbounded model output."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    text = text.replace("\n", " ").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _summarise_tool_result(result: dict[str, Any]) -> str:
+    """Compact success/error summary for the model's tool-call outcome."""
+    if result.get("success") is False or "error" in result:
+        error = result.get("error", "unknown_error")
+        message = result.get("message", "")
+        return f"error code={error} message={_clip_for_log(message, limit=200)}"
+    message = result.get("message")
+    if message:
+        return f"ok message={_clip_for_log(message, limit=200)}"
+    return "ok"
+
+
+def _message_from_last_tool(turn_items: list[dict[str, Any]]) -> str | None:
+    """Prefer the last tool's teacher-facing message when the model won't summarise."""
+    for item in reversed(turn_items):
+        if item.get("type") != "function_call_output":
+            continue
+        try:
+            payload = json.loads(item.get("output") or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            message = payload.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+    return None

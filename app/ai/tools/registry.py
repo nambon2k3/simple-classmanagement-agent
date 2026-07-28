@@ -160,24 +160,37 @@ class ToolRegistry:
         """
         spec = self._tools.get(name)
         if spec is None:
-            logger.warning("Model requested unknown tool", extra={"tool": name})
+            logger.warning(
+                "Model requested unknown tool tool=%s teacher_id=%s",
+                name,
+                context.teacher_id,
+            )
             return _error(ToolNotFoundError(f"I don't know how to do '{name}'."))
 
         try:
             payload = _decode_arguments(arguments)
         except ToolInputError as exc:
+            logger.info(
+                "Tool arguments were not valid JSON tool=%s teacher_id=%s message=%s",
+                name,
+                context.teacher_id,
+                exc.message,
+            )
             return _error(exc)
 
         try:
             validated = spec.input_model.model_validate(payload)
         except PydanticValidationError as exc:
+            message = _describe_validation_error(exc)
             logger.info(
-                "Tool arguments failed validation",
-                extra={"tool": name, "errors": exc.error_count()},
+                "Tool arguments failed validation tool=%s teacher_id=%s errors=%s message=%s payload=%s",
+                name,
+                context.teacher_id,
+                exc.error_count(),
+                message,
+                _clip_payload(payload),
             )
-            return _error(
-                ToolInputError(_describe_validation_error(exc), tool=name),
-            )
+            return _error(ToolInputError(message, tool=name))
 
         try:
             result = await spec.handler(context, validated)
@@ -185,19 +198,33 @@ class ToolRegistry:
             # Expected domain failures: the model turns these into a natural
             # reply or a follow-up question.
             logger.info(
-                "Tool returned a domain error",
-                extra={"tool": name, "code": exc.code},
+                "Tool returned a domain error tool=%s teacher_id=%s code=%s message=%s payload=%s",
+                name,
+                context.teacher_id,
+                exc.code,
+                exc.message,
+                _clip_payload(payload),
             )
             return _error(exc)
         except Exception:
             # Unexpected: log the detail for us, tell the model something bland.
-            logger.exception("Tool raised an unexpected error", extra={"tool": name})
+            logger.exception(
+                "Tool raised an unexpected error tool=%s teacher_id=%s payload=%s",
+                name,
+                context.teacher_id,
+                _clip_payload(payload),
+            )
             return ErrorResult(
                 error="internal_error",
                 message="Something went wrong on my side. Please try again.",
             ).model_dump(mode="json", exclude_none=True)
 
-        logger.info("Tool executed", extra={"tool": name, "teacher_id": context.teacher_id})
+        logger.info(
+            "Tool executed tool=%s teacher_id=%s payload=%s",
+            name,
+            context.teacher_id,
+            _clip_payload(payload),
+        )
         return result.model_dump(mode="json", exclude_none=True)
 
 
@@ -237,3 +264,11 @@ def _error(exc: AppError) -> dict[str, Any]:
         message=exc.message,
         details=exc.details or None,
     ).model_dump(mode="json", exclude_none=True)
+
+
+def _clip_payload(payload: dict[str, Any], *, limit: int = 500) -> str:
+    """Compact tool arguments for plain-text logs."""
+    text = json.dumps(payload, ensure_ascii=False, default=str)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."

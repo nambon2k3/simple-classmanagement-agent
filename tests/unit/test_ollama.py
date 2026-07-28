@@ -67,3 +67,64 @@ def test_split_response_falls_back_to_json_content():
     assert text == ""
     assert calls[0]["name"] == "create_class"
     assert '"name": "SE401"' in calls[0]["arguments"]
+
+
+def test_split_response_recovers_tool_json_embedded_in_prose():
+    content = (
+        'Based on the docs, I will use the `set_class_tuition_fee` function.\n\n'
+        "Here's how you can do it:\n\n"
+        "```\n"
+        '{"type":"function","name":"set_class_tuition_fee",'
+        '"parameters":{"class_name":"Lop7","daily_tuition_fee":50000}}\n'
+        "```\n"
+        "This will set the fee."
+    )
+    calls, text = split_response({"message": {"role": "assistant", "content": content}})
+
+    assert text == ""
+    assert calls[0]["name"] == "set_class_tuition_fee"
+    assert '"class_name": "Lop7"' in calls[0]["arguments"]
+    assert "50000" in calls[0]["arguments"]
+
+
+def test_split_response_recovers_malformed_missing_colon():
+    content = (
+        '{"type":"function","name":"set_class_tuition_fee",'
+        '"parameters {"class_name":"Lop7","daily_tuition_fee":50000}}'
+    )
+    calls, text = split_response({"message": {"role": "assistant", "content": content}})
+
+    assert text == ""
+    assert calls[0]["name"] == "set_class_tuition_fee"
+    assert "Lop7" in calls[0]["arguments"]
+    assert "50000" in calls[0]["arguments"]
+
+
+def test_rewrite_create_class_intent_maps_fee_tool():
+    from app.ai.ollama import rewrite_create_class_intent
+
+    calls = [
+        {
+            "call_id": "x",
+            "name": "set_class_tuition_fee",
+            "arguments": '{"class_name": "Lop7", "daily_tuition_fee": 50000}',
+        }
+    ]
+    rewritten = rewrite_create_class_intent(
+        calls, "Yes create new class named Lop7 and tution fee is 50000"
+    )
+    assert rewritten[0]["name"] == "create_class"
+    assert "Lop7" in rewritten[0]["arguments"]
+    assert "50000" in rewritten[0]["arguments"]
+
+
+def test_split_response_recovers_nested_function_object():
+    content = (
+        '{"type":"function","function":{"name":"create_class",'
+        '"arguments":{"name":"Lop7","daily_tuition_fee":50000}}}'
+    )
+    calls, text = split_response({"message": {"role": "assistant", "content": content}})
+
+    assert text == ""
+    assert calls[0]["name"] == "create_class"
+    assert "Lop7" in calls[0]["arguments"]

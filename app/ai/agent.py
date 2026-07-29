@@ -18,7 +18,12 @@ import httpx
 
 from app.ai.client import OllamaClient
 from app.ai.memory import ConversationState
-from app.ai.ollama import history_to_messages, rewrite_create_class_intent, split_response
+from app.ai.ollama import (
+    history_to_messages,
+    rewrite_add_student_intent,
+    rewrite_create_class_intent,
+    split_response,
+)
 from app.ai.prompts import build_system_prompt
 from app.ai.tools.registry import ToolContext, ToolRegistry
 from app.core.config import Settings, get_settings
@@ -44,6 +49,19 @@ _NARRATED_TOOL_RE = re.compile(
     r'(?is)("type"\s*:\s*"function"|I will use the|here\'s how you can do it|'
     r"call the `|use the `?\w+_?\w*`? function|"
     r'"name"\s*:\s*"[a-z][a-z0-9_]*")',
+)
+#: After tools already ran, small local models often apologise that they
+#: "cannot use tools". Never show that to the teacher.
+_TOOL_REFUSAL_RE = re.compile(
+    r"(?is)"
+    r"(cannot|can't|do not|don't|unable to|not able to)"
+    r".{0,40}"
+    r"(use tools?|call tools?|access tools?|execute tools?|support tools?|"
+    r"run tools?|use functions?|call functions?)"
+    r"|"
+    r"(as an ai|language model).{0,60}(cannot|can't|don't|unable)"
+    r"|"
+    r"I (?:do not|don't) have (?:access|ability).{0,40}tool",
 )
 
 
@@ -137,6 +155,7 @@ class AssistantAgent:
 
             calls, text = split_response(response)
             calls = rewrite_create_class_intent(calls, message)
+            calls = rewrite_add_student_intent(calls, message)
             if text:
                 reply_text = text
 
@@ -224,8 +243,10 @@ class AssistantAgent:
         state.focus_class_id = context.focus_class_id
         state.focus_session_id = context.focus_session_id
 
+        reply_text = _final_reply_text(reply_text, turn_items, tools_ran=bool(called))
+
         return AgentReply(
-            text=reply_text or _EMPTY_REPLY_FALLBACK,
+            text=reply_text,
             tool_calls=called,
             emitted=dict(context.emitted),
             focus_class_id=context.focus_class_id,
@@ -329,3 +350,24 @@ def _message_from_last_tool(turn_items: list[dict[str, Any]]) -> str | None:
             if isinstance(message, str) and message.strip():
                 return message.strip()
     return None
+
+
+def _final_reply_text(text: str, turn_items: list[dict[str, Any]], *, tools_ran: bool) -> str:
+    """Choose what the teacher sees after a turn, masking weak local-model prose."""
+    if not tools_ran:
+        return text or _EMPTY_REPLY_FALLBACK
+    if _should_use_tool_message_instead(text):
+        tool_message = _message_from_last_tool(turn_items)
+        if tool_message:
+            logger.info("Replacing model reply with last tool message after successful tools")
+            return tool_message
+    return text or _EMPTY_REPLY_FALLBACK
+
+
+def _should_use_tool_message_instead(text: str) -> bool:
+    """Whether to ignore the model's words and show the tool result instead."""
+    if not text or text in {_EMPTY_REPLY_FALLBACK, _COULD_NOT_RUN_TOOL_REPLY}:
+        return True
+    if _TOOL_REFUSAL_RE.search(text):
+        return True
+    return bool(_NARRATED_TOOL_RE.search(text))

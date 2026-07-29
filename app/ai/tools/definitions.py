@@ -284,8 +284,11 @@ def build_registry() -> ToolRegistry:
 
     registry.register(
         "add_student",
-        "Enrol a student into a class. Requires the class name, the student's full name "
-        "and their student ID.",
+        (
+            "Enrol a new student into a class roster. Use for 'add student …', "
+            "'register … to class …', or 'student … with code …'. Requires class_name, "
+            "full_name, and student_code. Do not use for attendance marking."
+        ),
         AddStudentInput,
         _add_student,
     )
@@ -333,9 +336,9 @@ def build_registry() -> ToolRegistry:
     registry.register(
         "update_attendance",
         (
-            "Record one student's attendance status in the open session. Use this for "
-            "messages like 'John absent' or 'Alice late'. Omit class_name when a session "
-            "is already open."
+            "Mark attendance for a student who is already enrolled. Use for "
+            "'John absent', 'Alice late', or 'David present'. Requires status. "
+            "Never use this to add a new student to a class."
         ),
         UpdateAttendanceInput,
         _update_attendance,

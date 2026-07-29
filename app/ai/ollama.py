@@ -179,14 +179,123 @@ def rewrite_create_class_intent(
     return rewritten
 
 
-def _looks_like_create_class(message: str) -> bool:
-    """Heuristic: teacher is asking to create/add a new class."""
+def rewrite_add_student_intent(
+    calls: list[dict[str, str]], user_message: str
+) -> list[dict[str, str]]:
+    """Map a mis-chosen attendance mark onto ``add_student`` when enrolling.
+
+    Local models often call ``update_attendance`` for "add student X with code Y
+    to class Z" because both mention a student reference and a class name.
+    """
+    if not calls or not _looks_like_add_student(user_message):
+        return calls
+
+    parsed = _parse_add_student_from_message(user_message)
+    rewritten: list[dict[str, str]] = []
+    for call in calls:
+        if call["name"] != "update_attendance":
+            rewritten.append(call)
+            continue
+        try:
+            args = json.loads(call["arguments"] or "{}")
+        except json.JSONDecodeError:
+            rewritten.append(call)
+            continue
+        if not isinstance(args, dict) or args.get("status"):
+            rewritten.append(call)
+            continue
+
+        class_name = _first_non_empty(
+            parsed.get("class_name"),
+            args.get("class_name") if isinstance(args.get("class_name"), str) else None,
+        )
+        student_code = _first_non_empty(
+            parsed.get("student_code"),
+            args.get("student") if isinstance(args.get("student"), str) else None,
+        )
+        full_name = parsed.get("full_name")
+        if not all(isinstance(value, str) and value.strip() for value in (class_name, student_code, full_name)):
+            rewritten.append(call)
+            continue
+
+        new_args = {
+            "class_name": class_name.strip(),
+            "full_name": full_name.strip(),
+            "student_code": student_code.strip(),
+        }
+        logger.info(
+            "Rewrote update_attendance → add_student for enrol intent name=%s code=%s class=%s",
+            new_args["full_name"],
+            new_args["student_code"],
+            new_args["class_name"],
+        )
+        rewritten.append(
+            {
+                "call_id": new_call_id("add_student"),
+                "name": "add_student",
+                "arguments": json.dumps(new_args, ensure_ascii=False),
+            }
+        )
+    return rewritten
+
+
+def _looks_like_add_student(message: str) -> bool:
+    """Heuristic: teacher wants to enrol a new student, not mark attendance."""
+    if re.search(r"(?i)\b(present|absent|late|excused)\b", message):
+        return False
     return bool(
         re.search(
-            r"(?i)\b(create|add|open|new)\b.{0,40}\bclass\b|\bclass\b.{0,20}\b(named|called)\b",
+            r"(?i)"
+            r"\b(add|enrol|enroll|register|insert)\b.{0,40}\bstudent\b|"
+            r"\bstudent\b.{0,40}\b(to|into)\b.{0,20}\bclass\b",
             message,
         )
     )
+
+
+def _parse_add_student_from_message(message: str) -> dict[str, str]:
+    """Best-effort scrape of enrolment fields from the teacher's message."""
+    result: dict[str, str] = {}
+
+    class_match = re.search(r"(?i)(?:to\s+class|into\s+class|class)\s+(\S+)", message)
+    if class_match:
+        result["class_name"] = class_match.group(1).rstrip(".,!?")
+
+    code_match = re.search(r"(?i)(?:with\s+)?code\s+(\S+)", message)
+    if code_match:
+        result["student_code"] = code_match.group(1).rstrip(".,!?")
+
+    name_match = re.search(
+        r"(?i)(?:add|enrol|enroll|register|insert)\s+student\s+"
+        r"(.+?)(?:\s+with\s+code|\s+to\s+class|\s+into\s+class|\s+class\b|$)",
+        message,
+    )
+    if name_match:
+        result["full_name"] = name_match.group(1).strip().rstrip(".,!?")
+
+    return result
+
+
+def _first_non_empty(*values: str | None) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _looks_like_create_class(message: str) -> bool:
+    """Heuristic: teacher is asking to create/add a new class."""
+    if re.search(
+        r"(?i)\b(create|open|new)\b.{0,40}\bclass\b|\bclass\b.{0,20}\b(?:named|called)\b",
+        message,
+    ):
+        return True
+    if re.search(r"(?i)\badd\b.{0,20}\b(?:a\s+)?(?:new\s+)?class\b", message):
+        # "add tuition fee for class X" updates a fee; it is not "add class X".
+        if re.search(r"(?i)\b(tuition|fee|fees|price|cost)\b", message):
+            return False
+        return True
+    return False
 
 
 def _recover_tool_calls_from_text(text: str) -> list[dict[str, str]]:

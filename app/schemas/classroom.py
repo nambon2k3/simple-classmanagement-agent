@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 from app.schemas.common import (
     ClassName,
@@ -33,7 +33,10 @@ class ClassRead(ToolOutput):
 class CreateClassInput(ToolInput):
     """Arguments for ``create_class``."""
 
-    name: ClassName = Field(description="Name of the new class, for example 'SE401'.")
+    name: ClassName = Field(
+        description="Name of the new class, for example 'SE401'.",
+        validation_alias=AliasChoices("name", "class_name"),
+    )
     description: ShortText | None = Field(
         default=None, description="Optional description of the class."
     )
@@ -82,7 +85,10 @@ class RenameClassOutput(OperationResult):
 class DeleteClassInput(ToolInput):
     """Arguments for ``delete_class``."""
 
-    name: ClassName = Field(description="Name of the class to delete.")
+    name: ClassName = Field(
+        description="Name of the class to delete.",
+        validation_alias=AliasChoices("name", "class_name"),
+    )
     confirm: bool = Field(
         default=False,
         description=(
@@ -119,7 +125,10 @@ class ListClassesOutput(ToolOutput):
 class ClassInfoInput(ToolInput):
     """Arguments for ``get_class_info``."""
 
-    name: ClassName = Field(description="Name of the class to describe.")
+    name: ClassName = Field(
+        description="Name of the class to describe.",
+        validation_alias=AliasChoices("name", "class_name"),
+    )
 
 
 class ClassInfoOutput(ToolOutput):

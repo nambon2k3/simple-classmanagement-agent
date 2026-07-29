@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from app.ai.ollama import history_to_messages, split_response
 
 
@@ -116,6 +118,56 @@ def test_rewrite_create_class_intent_maps_fee_tool():
     assert rewritten[0]["name"] == "create_class"
     assert "Lop7" in rewritten[0]["arguments"]
     assert "50000" in rewritten[0]["arguments"]
+
+
+def test_rewrite_does_not_map_add_tuition_fee_to_create_class():
+    from app.ai.ollama import rewrite_create_class_intent
+
+    calls = [
+        {
+            "call_id": "x",
+            "name": "set_class_tuition_fee",
+            "arguments": '{"class_name": "SE1734", "daily_tuition_fee": 50000}',
+        }
+    ]
+    rewritten = rewrite_create_class_intent(calls, "Add tuition fee 50000 for class SE1734")
+    assert rewritten[0]["name"] == "set_class_tuition_fee"
+
+
+def test_rewrite_add_student_intent_maps_attendance_tool():
+    from app.ai.ollama import rewrite_add_student_intent
+
+    calls = [
+        {
+            "call_id": "x",
+            "name": "update_attendance",
+            "arguments": '{"student": "HN", "class_name": "SE1734"}',
+        }
+    ]
+    rewritten = rewrite_add_student_intent(
+        calls, "Add student HoaiNam with code HN to class SE1734"
+    )
+    assert rewritten[0]["name"] == "add_student"
+    args = json.loads(rewritten[0]["arguments"])
+    assert args == {
+        "class_name": "SE1734",
+        "full_name": "HoaiNam",
+        "student_code": "HN",
+    }
+
+
+def test_rewrite_add_student_leaves_attendance_marking_alone():
+    from app.ai.ollama import rewrite_add_student_intent
+
+    calls = [
+        {
+            "call_id": "x",
+            "name": "update_attendance",
+            "arguments": '{"student": "HN", "status": "present", "class_name": "SE1734"}',
+        }
+    ]
+    rewritten = rewrite_add_student_intent(calls, "HN present in SE1734")
+    assert rewritten[0]["name"] == "update_attendance"
 
 
 def test_split_response_recovers_nested_function_object():

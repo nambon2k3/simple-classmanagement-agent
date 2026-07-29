@@ -321,3 +321,47 @@ async def test_ollama_tools_are_built_from_the_registry():
     tools = build_registry().to_ollama_tools()
     assert {tool["function"]["name"] for tool in tools} == set(build_registry().names)
     assert all(tool["type"] == "function" for tool in tools)
+
+
+async def test_refusal_after_successful_tools_shows_tool_message(services, teacher, state):
+    """Local models often apologise about tools even after they ran."""
+    agent, _ = make_agent(
+        [
+            tool_call("create_class", {"name": "SE401", "description": None}),
+            text_response(
+                "I'm sorry, I cannot use tools or call functions to create classes for you."
+            ),
+        ]
+    )
+    reply = await agent.run("Create class SE401", state=state, services=services)
+
+    assert reply.tool_calls == ["create_class"]
+    assert "cannot use tools" not in reply.text.lower()
+    assert "SE401" in reply.text
+    listed = await services.classes.list_classes(teacher.id)
+    assert [item.name for item in listed.classes] == ["SE401"]
+
+
+async def test_add_student_rewrites_wrong_attendance_tool(services, teacher, classroom, state):
+    """Small models often pick update_attendance when enrolling someone new."""
+    agent, _ = make_agent(
+        [
+            tool_call("update_attendance", {"student": "HN", "class_name": "SE401"}),
+            text_response("Added HoaiNam to SE401."),
+        ]
+    )
+    reply = await agent.run(
+        "Add student HoaiNam with code HN to class SE401",
+        state=state,
+        services=services,
+    )
+
+    assert reply.tool_calls == ["add_student"]
+    from app.schemas.student import ListStudentsInput
+
+    roster = await services.students.list_students(
+        teacher.id, ListStudentsInput(class_name="SE401")
+    )
+    assert roster.total == 1
+    assert roster.students[0].student_code == "HN"
+    assert roster.students[0].full_name == "HoaiNam"

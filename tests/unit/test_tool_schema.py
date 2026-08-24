@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.ai.tools.definitions import build_registry
 from app.ai.tools.schema import build_openai_tool_schema, build_tool_schema
+from app.schemas.classroom import CreateClassInput
 
 
 class Colour(StrEnum):
@@ -26,9 +27,16 @@ class Sample(BaseModel):
     nested: Nested | None = Field(default=None, description="A nested object.")
 
 
-def test_every_property_is_required():
+def test_only_required_fields_are_mandatory():
     schema = build_tool_schema(Sample)
-    assert set(schema["required"]) == {"name", "colour", "optional", "nested"}
+    assert schema["required"] == ["name"]
+
+
+def test_optional_fields_may_be_omitted():
+    schema = build_tool_schema(Sample)
+    assert "optional" not in schema["required"]
+    assert "nested" not in schema["required"]
+    assert "colour" not in schema["required"]
 
 
 def test_llm_schema_omits_additional_properties():
@@ -84,6 +92,11 @@ def test_empty_model_produces_a_valid_object_schema():
     }
 
 
+def test_create_class_only_requires_name():
+    schema = build_tool_schema(CreateClassInput)
+    assert schema["required"] == ["name"]
+
+
 def test_every_registered_tool_produces_an_llm_schema():
     """Guards the whole catalogue, not just the sample model."""
     for tool in build_registry().to_function_declarations():
@@ -99,7 +112,7 @@ def _assert_llm(node: object, path: str) -> None:
         assert "allOf" not in node, path
         assert "additionalProperties" not in node, path
         if node.get("type") == "object":
-            assert set(node["required"]) == set(node["properties"]), path
+            assert set(node["required"]).issubset(set(node["properties"])), path
         for key, value in node.items():
             _assert_llm(value, f"{path}.{key}")
     elif isinstance(node, list):

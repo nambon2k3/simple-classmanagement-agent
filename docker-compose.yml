@@ -22,7 +22,7 @@ services:
   # deploy can never start against a stale schema.
   migrate:
     build: .
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "scripts/wait_for_db.py", "upgrade", "head"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-class_management}
@@ -38,9 +38,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-class_management}
       TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

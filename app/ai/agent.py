@@ -1,6 +1,6 @@
 """The assistant agent: one user message in, one reply out.
 
-Implements the tool-calling loop against a local Ollama model.  The agent owns
+Implements the tool-calling loop against Groq.  The agent owns
 *conversation* concerns — history, iteration limits, turning API failures into
 something a teacher can read — and nothing else.  It cannot touch the database;
 the only capability it has is asking the registry to run a named tool, and the
@@ -14,16 +14,20 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
-from app.ai.client import OllamaClient
-from app.ai.memory import ConversationState
-from app.ai.ollama import (
-    history_to_messages,
-    rewrite_add_student_intent,
-    rewrite_create_class_intent,
-    split_response,
+from groq import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
 )
+
+from app.ai.client import GroqClient
+from app.ai.groq import history_to_messages, split_response
+from app.ai.memory import ConversationState
+from app.ai.ollama import rewrite_add_student_intent, rewrite_create_class_intent
 from app.ai.prompts import build_system_prompt
 from app.ai.tools.registry import ToolContext, ToolRegistry
 from app.core.config import Settings, get_settings
@@ -87,14 +91,14 @@ class AssistantAgent:
 
     def __init__(
         self,
-        client: OllamaClient,
+        client: GroqClient,
         registry: ToolRegistry,
         settings: Settings | None = None,
     ) -> None:
         """Wire the agent to its dependencies.
 
         Args:
-            client: Configured Ollama client.
+            client: Configured Groq client.
             registry: Catalogue of tools the model may call.
             settings: Configuration for the model name and loop limits.
         """
@@ -121,7 +125,7 @@ class AssistantAgent:
             The reply to send, plus anything the tools emitted.
 
         Raises:
-            AssistantError: Only if Ollama itself is unreachable or
+            AssistantError: Only if Groq itself is unreachable or
                 misconfigured.  Tool failures never raise; they come back to
                 the model as structured errors.
         """
@@ -260,52 +264,92 @@ class AssistantAgent:
         history: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Call Ollama, translating transport failures.
+        """Call Groq, translating transport failures.
 
         Raises:
             AssistantError: If the server cannot be reached or rejects the request.
         """
         messages = history_to_messages(history, system=instructions)
-        attempts = self._settings.ollama_max_retries + 1
+        attempts = self._settings.groq_max_retries + 1
         last_error: Exception | None = None
 
         for attempt in range(attempts):
             try:
                 return await self._client.chat(
-                    model=self._settings.ollama_model,
+                    model=self._settings.groq_model,
                     messages=messages,
                     tools=tools,
                 )
-            except httpx.TimeoutException as exc:
-                logger.warning("Ollama request timed out", extra={"attempt": attempt + 1})
+            except APITimeoutError as exc:
+                logger.warning("Groq request timed out", extra={"attempt": attempt + 1})
                 last_error = exc
-            except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                logger.exception(
-                    "Ollama HTTP error",
-                    extra={"status": status, "attempt": attempt + 1},
-                )
-                if status >= 500 and attempt + 1 < attempts:
+            except RateLimitError as exc:
+                logger.warning("Groq rate limit", extra={"attempt": attempt + 1, "body": exc.body})
+                if attempt + 1 < attempts:
                     last_error = exc
                     continue
+                raise AssistantError(
+                    "I'm temporarily out of AI quota. Please try again in a moment."
+                ) from exc
+            except NotFoundError as exc:
+                body = exc.body if isinstance(exc.body, dict) else {}
+                error = body.get("error", {}) if isinstance(body.get("error"), dict) else {}
+                if error.get("code") == "unknown_url":
+                    logger.error("Groq base URL misconfigured", extra={"body": exc.body})
+                    raise AssistantError(
+                        "My AI endpoint URL is misconfigured. "
+                        "Set GROQ_BASE_URL=https://api.groq.com (or leave it unset)."
+                    ) from exc
+                logger.error("Groq model not found", extra={"body": exc.body})
+                raise AssistantError(
+                    f"I couldn't find the model '{self._settings.groq_model}'. "
+                    "Please check GROQ_MODEL in your configuration."
+                ) from exc
+            except AuthenticationError as exc:
+                logger.error("Groq authentication failed", extra={"body": exc.body})
+                raise AssistantError(
+                    "My AI key is invalid. Please ask the administrator to check GROQ_API_KEY."
+                ) from exc
+            except PermissionDeniedError as exc:
+                logger.error("Groq permission denied", extra={"body": exc.body})
+                raise AssistantError(
+                    f"I don't have access to model '{self._settings.groq_model}'. "
+                    "Please check GROQ_MODEL and GROQ_API_KEY."
+                ) from exc
+            except APIStatusError as exc:
+                status = exc.status_code
+                logger.exception(
+                    "Groq HTTP error",
+                    extra={"status": status, "attempt": attempt + 1, "body": exc.body},
+                )
+                if status in {429, 503} and attempt + 1 < attempts:
+                    last_error = exc
+                    continue
+                if status == 429:
+                    raise AssistantError(
+                        "I'm temporarily out of AI quota. Please try again in a moment."
+                    ) from exc
                 if status == 404:
                     raise AssistantError(
-                        f"I couldn't find the model '{self._settings.ollama_model}'. "
-                        "Please pull it with Ollama first."
+                        f"I couldn't find the model '{self._settings.groq_model}'. "
+                        "Please check GROQ_MODEL in your configuration."
                     ) from exc
                 raise AssistantError(
                     "I couldn't reach my language model just now. Please try again in a moment."
                 ) from exc
-            except httpx.HTTPError as exc:
-                logger.exception("Ollama connection error", extra={"attempt": attempt + 1})
+            except APIConnectionError as exc:
+                logger.exception("Groq connection error", extra={"attempt": attempt + 1})
                 last_error = exc
             except Exception as exc:
-                logger.exception("Ollama client error")
+                logger.exception("Groq client error", extra={"attempt": attempt + 1})
+                last_error = exc
+                if attempt + 1 < attempts:
+                    continue
                 raise AssistantError(
                     "My assistant configuration looks wrong. Please tell the administrator."
                 ) from exc
 
-        if isinstance(last_error, httpx.TimeoutException):
+        if isinstance(last_error, APITimeoutError):
             raise AssistantError("That took too long. Please try again.") from last_error
         raise AssistantError(
             "I couldn't reach my language model just now. Please try again in a moment."

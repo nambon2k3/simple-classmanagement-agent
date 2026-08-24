@@ -73,7 +73,7 @@ class ToolSpec:
         }
 
     def to_ollama_tool(self) -> dict[str, Any]:
-        """Render this tool for Ollama's OpenAI-compatible tools field."""
+        """Render this tool for OpenAI-compatible chat tool calling (Groq/Ollama)."""
         return {
             "type": "function",
             "function": self.to_function_declaration(),
@@ -137,7 +137,7 @@ class ToolRegistry:
         return [spec.to_function_declaration() for spec in self._tools.values()]
 
     def to_ollama_tools(self) -> list[dict[str, Any]]:
-        """Render the whole catalogue for Ollama function calling."""
+        """Render the whole catalogue for OpenAI-compatible tool calling."""
         return [spec.to_ollama_tool() for spec in self._tools.values()]
 
     def to_openai_tools(self) -> list[dict[str, Any]]:

@@ -1,13 +1,14 @@
-"""Convert Pydantic models into JSON schemas for local LLM function tools.
+"""Convert Pydantic models into JSON schemas for LLM function tools.
 
-Local LLM providers validate tool arguments against the schema they are given,
-but only accept a conservative subset of JSON Schema.  This module narrows
-Pydantic's output to that subset:
+Providers validate tool arguments against the schema they are given, but each
+one accepts a slightly different JSON Schema subset.  This module narrows
+Pydantic's output to a conservative form:
 
 * ``$ref``/``$defs`` are inlined, so nested models and enums cannot trip over
   reference-resolution differences;
-* every property is listed in ``required`` — optionality is expressed by
-  allowing ``null`` instead;
+* ``required`` follows Pydantic — only fields without defaults are mandatory.
+  Groq rejects tool calls when optional keys are listed in ``required`` but
+  omitted by the model;
 * ``additionalProperties`` is omitted because some providers reject it;
 * validation keywords the API may reject (lengths, numeric bounds, formats) are
   dropped.
@@ -118,9 +119,16 @@ def _strictify(node: Any, *, depth: int, for_openai: bool = False) -> Any:
     if result.get("type") == "object" or "properties" in result:
         properties = result.setdefault("properties", {})
         result["type"] = "object"
-        result["required"] = list(properties)
         if for_openai:
+            # OpenAI strict mode expects every property listed as required.
+            result["required"] = list(properties)
             result["additionalProperties"] = False
+        else:
+            existing_required = result.get("required")
+            if isinstance(existing_required, list):
+                result["required"] = [name for name in existing_required if name in properties]
+            else:
+                result["required"] = list(properties)
 
     # A bare ``anyOf`` of a single branch adds nothing but nesting.
     branches = result.get("anyOf")

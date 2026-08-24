@@ -64,13 +64,14 @@ class Settings(BaseSettings):
     #: deployment.  Populate it to lock the bot down.
     telegram_allowed_user_ids: list[int] = Field(default_factory=list)
 
-    # -------------------------------------------------------------- ollama ---
-    #: Ollama server URL.  Accepts ``127.0.0.1:11434`` or ``http://host:port``.
-    #: ``0.0.0.0`` is normalised to ``127.0.0.1`` because it is a bind address.
-    ollama_host: str = "http://127.0.0.1:11434"
-    ollama_model: str = "llama3.2:3b"
-    ollama_timeout_seconds: float = Field(default=120.0, gt=0)
-    ollama_max_retries: int = Field(default=1, ge=0)
+    # --------------------------------------------------------------- groq ----
+    #: API key from https://console.groq.com/keys
+    groq_api_key: SecretStr = SecretStr("")
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com"
+    groq_timeout_seconds: float = Field(default=120.0, gt=0)
+    groq_max_retries: int = Field(default=1, ge=0)
+    groq_log_prompts: bool = False
 
     # --------------------------------------------------------- assistant ----
     #: How long a conversation (chat history + attendance focus) survives
@@ -101,16 +102,30 @@ class Settings(BaseSettings):
             return value.replace("postgres://", "postgresql+asyncpg://", 1)
         return value
 
-    @field_validator("ollama_host")
+    @field_validator("groq_base_url")
     @classmethod
-    def _normalize_ollama_host(cls, value: str) -> str:
-        host = value.strip()
-        if not host.startswith(("http://", "https://")):
-            host = f"http://{host}"
-        # Ollama is often started with OLLAMA_HOST=0.0.0.0:11434, but clients
-        # must connect to a routable address on the same machine.
-        host = host.replace("0.0.0.0", "127.0.0.1")
-        return host.rstrip("/")
+    def _normalize_groq_base_url(cls, value: str) -> str:
+        """Normalise for the official Groq SDK (root URL only).
+
+        The SDK appends ``/openai/v1`` itself.  Older configs used the full
+        OpenAI-compatible path and ended up calling
+        ``/openai/v1/openai/v1/chat/completions``.
+        """
+        value = value.strip().rstrip("/")
+        if value.endswith("/openai/v1"):
+            value = value[: -len("/openai/v1")].rstrip("/")
+        return value or "https://api.groq.com"
+
+    @field_validator("groq_model")
+    @classmethod
+    def _reject_classifier_models(cls, value: str) -> str:
+        lowered = value.lower()
+        if "prompt-guard" in lowered or "llama-guard" in lowered:
+            raise ValueError(
+                f"GROQ_MODEL={value!r} is a security classifier, not a chat assistant. "
+                "Use llama-3.3-70b-versatile or llama-3.1-8b-instant for this bot."
+            )
+        return value
 
     @field_validator("timezone")
     @classmethod

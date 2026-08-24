@@ -101,7 +101,7 @@ model at all — which is exactly how the test suite drives them.
 
 ```bash
 cp .env.example .env
-# Fill in TELEGRAM_BOT_TOKEN (from @BotFather). Ollama must be running locally.
+# Fill in TELEGRAM_BOT_TOKEN (from @BotFather) and GROQ_API_KEY (from GroqCloud).
 
 docker compose up --build
 ```
@@ -134,9 +134,9 @@ list. The settings that matter most:
 | Variable | Default | Why you would change it |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | — | Required. From `@BotFather`. |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Your Ollama server. Use `http://host.docker.internal:11434` from Docker. |
-| `OLLAMA_MODEL` | `llama3.2:3b` | Any Ollama model with tool-calling support. |
-| `OLLAMA_TIMEOUT_SECONDS` | `120` | Local models can be slow on first load. |
+| `GROQ_API_KEY` | — | Required. From [GroqCloud API Keys](https://console.groq.com/keys). |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Any Groq model with tool calling. |
+| `GROQ_TIMEOUT_SECONDS` | `120` | HTTP timeout for Groq requests. |
 | `DATABASE_URL` | local PostgreSQL | The `+asyncpg` driver is added for you if you omit it. |
 | `TIMEZONE` | `UTC` | **Set this.** It decides what "today" means for attendance and reports. |
 | `TELEGRAM_MODE` | `polling` | `webhook` for production behind a public URL. |
@@ -201,7 +201,7 @@ so deletion always takes a confirmed second step.
 app/
 ├── ai/
 │   ├── agent.py            tool-calling loop over the Responses API
-│   ├── client.py           Ollama client construction
+│   ├── client.py           Groq client construction
 │   ├── memory.py           conversation state + TTL expiry
 │   ├── prompts.py          system prompt assembly
 │   └── tools/
@@ -292,7 +292,7 @@ pipenv run ruff format app tests
 
 Integration tests run against a real SQLite database with foreign keys enabled,
 so the SQL the repositories build is genuinely exercised and cascade deletes
-really cascade. Only the Ollama client is faked — `tests/integration/test_agent.py`
+really cascade. Only the Groq client is faked — `tests/integration/test_agent.py`
 replays scripted model responses through the real registry, real services and a
 real database, which is what proves the loop end to end:
 

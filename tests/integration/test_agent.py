@@ -1,6 +1,6 @@
 """The agent's tool-calling loop, driven by a scripted model.
 
-The Ollama client is faked so the loop is deterministic, but everything below
+The Groq client is faked so the loop is deterministic, but everything below
 it is real: the registry validates, the services run and the database is
 written to.  These tests are what prove the model can only reach the data
 through tools.
@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 import pytest
+from groq import APIStatusError
 
 from app.ai.agent import AssistantAgent
 from app.ai.memory import ConversationState
@@ -26,13 +27,13 @@ from app.schemas.classroom import ListClassesInput  # noqa: F401  (documents the
 
 @dataclass
 class FakeResponse:
-    """Mimics an Ollama ``/api/chat`` JSON body."""
+    """Mimics a Groq ``/chat/completions`` assistant message."""
 
     message: dict[str, Any] = field(default_factory=dict)
 
 
 class ScriptedClient:
-    """Stands in for :class:`~app.ai.client.OllamaClient`."""
+    """Stands in for :class:`~app.ai.client.GroqClient`."""
 
     def __init__(self, script: list[FakeResponse]) -> None:
         self._script = list(script)
@@ -41,21 +42,21 @@ class ScriptedClient:
     async def chat(self, **kwargs: Any) -> dict[str, Any]:
         self.requests.append(kwargs)
         if not self._script:
-            return {"message": {"role": "assistant", "content": "(no more scripted responses)"}}
+            return {"choices": [{"message": {"role": "assistant", "content": "(no more scripted responses)"}}]}
         item = self._script.pop(0)
-        return {"message": item.message}
+        return {"choices": [{"message": item.message}]}
 
 
 def tool_call(name: str, arguments: dict[str, Any], call_id: str | None = None) -> FakeResponse:
     return FakeResponse(
         message={
             "role": "assistant",
-            "content": "",
+            "content": None,
             "tool_calls": [
                 {
                     "id": call_id or f"call_{name}",
                     "type": "function",
-                    "function": {"name": name, "arguments": arguments},
+                    "function": {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)},
                 }
             ],
         }
@@ -66,12 +67,15 @@ def tool_calls(*calls: tuple[str, dict[str, Any]]) -> FakeResponse:
     return FakeResponse(
         message={
             "role": "assistant",
-            "content": "",
+            "content": None,
             "tool_calls": [
                 {
                     "id": f"call_{name}",
                     "type": "function",
-                    "function": {"name": name, "arguments": arguments},
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
                 }
                 for name, arguments in calls
             ],
@@ -208,12 +212,14 @@ async def test_the_loop_stops_at_the_iteration_limit(services, teacher, classroo
 
 
 async def test_api_failures_surface_as_a_readable_error(services, teacher, state):
-    class TimingOutClient:
-        async def chat(self, **_: Any) -> FakeResponse:
-            raise httpx.ReadTimeout("timed out")
+    class FailingClient:
+        async def chat(self, **_: Any) -> dict[str, Any]:
+            request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+            response = httpx.Response(503, request=request)
+            raise APIStatusError("service unavailable", response=response, body=None)
 
-    agent = AssistantAgent(TimingOutClient(), build_registry(), get_settings())
-    with pytest.raises(AssistantError, match="took too long"):
+    agent = AssistantAgent(FailingClient(), build_registry(), get_settings())
+    with pytest.raises(AssistantError, match="language model"):
         await agent.run("hello", state=state, services=services)
 
 
@@ -317,7 +323,7 @@ async def test_finishing_clears_the_attendance_focus(services, teacher, roster, 
     assert state.focus_class_id is not None  # the class stays in focus
 
 
-async def test_ollama_tools_are_built_from_the_registry():
+async def test_groq_tools_are_built_from_the_registry():
     tools = build_registry().to_ollama_tools()
     assert {tool["function"]["name"] for tool in tools} == set(build_registry().names)
     assert all(tool["type"] == "function" for tool in tools)

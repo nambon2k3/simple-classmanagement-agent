@@ -24,7 +24,7 @@ async def client(database) -> AsyncIterator[AsyncClient]:
     """An HTTP client bound to the app without running its lifespan.
 
     Skipping the lifespan keeps the tests offline: no bot is started and no
-    Telegram or Ollama credentials are needed.
+    Telegram or Groq credentials are needed.
     """
     from app.main import create_app
 

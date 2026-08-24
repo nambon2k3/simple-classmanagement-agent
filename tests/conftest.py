@@ -1,7 +1,7 @@
 """Shared pytest fixtures.
 
 Integration tests run against a real (SQLite) database rather than mocks, so
-the SQL the repositories build is genuinely exercised.  Only the Ollama client
+the SQL the repositories build is genuinely exercised.  Only the Groq client
 is faked, because that is the one dependency a test must never reach.
 """
 
@@ -18,8 +18,8 @@ TEST_ENVIRONMENT = {
     "ENVIRONMENT": "local",
     "TIMEZONE": "UTC",
     "TELEGRAM_BOT_TOKEN": "test-telegram-token",
-    "OLLAMA_HOST": "http://127.0.0.1:11434",
-    "OLLAMA_MODEL": "test-model",
+    "GROQ_API_KEY": "test-groq-key",
+    "GROQ_MODEL": "llama-3.3-70b-versatile",
     "TELEGRAM_ALLOWED_USER_IDS": "[]",
     "LOG_LEVEL": "WARNING",
 }

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from telegram.ext import Application, ContextTypes
 
 from app.ai.agent import AssistantAgent
-from app.ai.client import get_ollama_client
+from app.ai.client import get_groq_client
 from app.ai.memory import InMemoryConversationStore
 from app.ai.tools.definitions import build_registry
 from app.core.config import Settings, get_settings
@@ -48,7 +48,7 @@ class BotRuntime:
         settings = settings or get_settings()
         return cls(
             database=get_database(),
-            agent=AssistantAgent(get_ollama_client(), build_registry(), settings),
+            agent=AssistantAgent(get_groq_client(), build_registry(), settings),
             conversations=InMemoryConversationStore(settings.conversation_ttl_seconds),
             settings=settings,
         )

@@ -24,6 +24,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH="/app" \
     PATH="/app/.venv/bin:$PATH"
 
 # Run as an unprivileged user.
@@ -35,6 +36,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --chown=app:app alembic.ini pyproject.toml ./
 COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app app ./app
+COPY --chown=app:app scripts ./scripts
 
 USER app
 

@@ -45,6 +45,20 @@ class AttendanceSessionStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class TuitionChargeStatus(StrEnum):
+    """Whether a billed attendance day has been paid."""
+
+    NOT_YET = "not_yet"
+    COMPLETED = "completed"
+
+    @property
+    def label(self) -> str:
+        """Teacher-facing status, e.g. ``"Not yet"``."""
+        if self is TuitionChargeStatus.NOT_YET:
+            return "Not yet"
+        return "Completed"
+
+
 _STATUS_EMOJI: dict[AttendanceStatus, str] = {
     AttendanceStatus.PRESENT: "✅",
     AttendanceStatus.ABSENT: "❌",

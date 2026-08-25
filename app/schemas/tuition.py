@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from pydantic import Field, field_validator
 
 from app.schemas.common import ClassName, DateInput, ToolInput, ToolOutput
@@ -122,7 +124,68 @@ class TeachingDaysReportOutput(ToolOutput):
 
     @field_validator("classes")
     @classmethod
-    def _sort_classes(
-        cls, value: list[ClassTeachingDaysRow]
-    ) -> list[ClassTeachingDaysRow]:
+    def _sort_classes(cls, value: list[ClassTeachingDaysRow]) -> list[ClassTeachingDaysRow]:
         return sorted(value, key=lambda row: row.class_name)
+
+
+class TuitionStatusSummary(ToolOutput):
+    """Completed versus unpaid tuition across the teacher's classes."""
+
+    not_yet_vnd: int = Field(description="Sum of unpaid charges in VND.")
+    completed_vnd: int = Field(description="Sum of paid charges in VND.")
+    formatted_not_yet: str = Field(description="Human-readable unpaid total.")
+    formatted_completed: str = Field(description="Human-readable paid total.")
+
+
+class StudentTuitionStatusRow(ToolOutput):
+    """Payment status for one student in one class."""
+
+    student_id: int = Field(description="Internal student identifier.")
+    student_code: str = Field(description="Teacher-facing student ID.")
+    full_name: str = Field(description="Student's full name.")
+    unpaid_days: int = Field(description="Present/late days that are not yet paid.")
+    unpaid_vnd: int = Field(description="Amount still owed in VND.")
+    completed_vnd: int = Field(description="Amount already paid in VND.")
+    formatted_unpaid: str = Field(description="Human-readable unpaid amount.")
+    status: str = Field(description="Not yet or Completed.")
+
+
+class AttendanceMark(ToolOutput):
+    """One day of a student's attendance since their last payment."""
+
+    session_date: date = Field(description="Day the class met.")
+    attended: bool = Field(description="True when the student was present or late.")
+    recorded: bool = Field(default=True, description="False when nobody marked the student.")
+
+
+class StudentAttendanceSinceRow(ToolOutput):
+    """A student's day-by-day attendance since their last tuition payment."""
+
+    student_id: int = Field(description="Internal student identifier.")
+    student_code: str = Field(description="Teacher-facing student ID.")
+    full_name: str = Field(description="Student's full name.")
+    paid_through: date | None = Field(
+        default=None,
+        description="Last session date already paid for, or null when nothing was ever paid.",
+    )
+    marks: list[AttendanceMark] = Field(
+        default_factory=list, description="One entry per day the class met, oldest first."
+    )
+    present_days: int = Field(default=0, description="Days attended in the unpaid window.")
+    absent_days: int = Field(default=0, description="Days missed in the unpaid window.")
+    unpaid_vnd: int = Field(default=0, description="Outstanding tuition in VND.")
+    formatted_unpaid: str = Field(description="Human-readable outstanding amount.")
+
+
+class ClassAttendanceSinceOutput(ToolOutput):
+    """Attendance for every student in a class since their last payment."""
+
+    class_name: str = Field(description="Class that was summarised.")
+    students: list[StudentAttendanceSinceRow] = Field(
+        default_factory=list, description="Rows ordered by student name."
+    )
+    total_present: int = Field(default=0, description="Attended days across the class.")
+    total_absent: int = Field(default=0, description="Missed days across the class.")
+    session_days: int = Field(
+        default=0, description="Distinct days the class met inside the reported window."
+    )

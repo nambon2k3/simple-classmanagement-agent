@@ -8,9 +8,11 @@ test fixtures rely on.
 from app.models.attendance import AttendanceRecord, AttendanceSession
 from app.models.base import Base
 from app.models.classroom import Classroom
-from app.models.enums import AttendanceSessionStatus, AttendanceStatus
+from app.models.enums import AttendanceSessionStatus, AttendanceStatus, TuitionChargeStatus
+from app.models.schedule import ClassExtraSession, ClassScheduleRule
 from app.models.student import Student
 from app.models.teacher import Teacher
+from app.models.tuition import TuitionCharge
 
 __all__ = [
     "AttendanceRecord",
@@ -18,7 +20,11 @@ __all__ = [
     "AttendanceSessionStatus",
     "AttendanceStatus",
     "Base",
+    "ClassExtraSession",
+    "ClassScheduleRule",
     "Classroom",
     "Student",
     "Teacher",
+    "TuitionCharge",
+    "TuitionChargeStatus",
 ]

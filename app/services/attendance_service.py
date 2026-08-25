@@ -16,6 +16,8 @@ Each operation has two entry points that share one implementation:
 
 from __future__ import annotations
 
+from datetime import date
+
 from app.core.exceptions import (
     AmbiguousReferenceError,
     AttendanceAlreadyTakenError,
@@ -30,6 +32,7 @@ from app.models.enums import AttendanceSessionStatus, AttendanceStatus
 from app.models.student import Student
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.student_repository import StudentRepository
+from app.repositories.tuition_charge_repository import TuitionChargeRepository
 from app.schemas.attendance import (
     AttendanceEntry,
     AttendanceSessionRead,
@@ -63,6 +66,7 @@ class AttendanceService:
         student_repository: StudentRepository,
         class_service: ClassService,
         student_service: StudentService,
+        tuition_charge_repository: TuitionChargeRepository,
     ) -> None:
         """Wire the service to its collaborators.
 
@@ -71,11 +75,13 @@ class AttendanceService:
             student_repository: Used to build the roster of a session.
             class_service: Resolves class names and enforces ownership.
             student_service: Resolves loose student references.
+            tuition_charge_repository: Creates billed days when a session is finished.
         """
         self._attendance = attendance_repository
         self._students = student_repository
         self._classes = class_service
         self._student_service = student_service
+        self._charges = tuition_charge_repository
 
     # ------------------------------------------------------------- starting --
 
@@ -304,6 +310,23 @@ class AttendanceService:
             session=await self.build_session_read(session, await self._class_name(session)),
         )
 
+    async def get_session_for_date(
+        self,
+        teacher_id: int,
+        class_name: str,
+        session_date: date,
+    ) -> AttendanceSessionRead | None:
+        """Return the session for a class on one calendar date, if it exists.
+
+        Unlike :meth:`get_state`, this never falls back to an open session from
+        another day.  Cancelled sessions are treated as absent.
+        """
+        classroom = await self._classes.resolve(teacher_id, class_name)
+        session = await self._attendance.get_for_class_on_date(classroom.id, session_date)
+        if session is None or session.status is AttendanceSessionStatus.CANCELLED:
+            return None
+        return await self.build_session_read(session, classroom.name)
+
     async def get_session_view(self, teacher_id: int, session_id: int) -> AttendanceSessionRead:
         """Render a session by id, for refreshing the Telegram keyboard.
 
@@ -422,6 +445,9 @@ class AttendanceService:
 
         records = await self._attendance.list_records(session.id)
         summary = AttendanceSummary.from_counts(_count_statuses(records), len(roster))
+        classroom = await self._classes.get_by_id(session.class_id)
+        if classroom is not None:
+            await self._charges.sync_for_session(session.id, classroom.daily_tuition_fee, records)
 
         logger.info(
             "Attendance session completed",

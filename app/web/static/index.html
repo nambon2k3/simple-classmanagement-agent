@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Class Management</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <nav id="rail" aria-label="Servers"></nav>
+      <aside id="channels" aria-label="Channels"></aside>
+      <main id="main">
+        <header id="main-header"></header>
+        <div id="main-body"></div>
+      </main>
+      <aside id="context" aria-label="Details"></aside>
+    </div>
+    <div id="modal-root"></div>
+    <div id="toast-root" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

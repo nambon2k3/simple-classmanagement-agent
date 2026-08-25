@@ -15,6 +15,8 @@ from app.repositories.student_repository import StudentRepository
 from app.schemas.student import (
     AddStudentInput,
     AddStudentOutput,
+    ImportStudentsInput,
+    ImportStudentsOutput,
     ListStudentsInput,
     ListStudentsOutput,
     RemoveStudentInput,
@@ -160,6 +162,65 @@ class StudentService:
         return AddStudentOutput(
             message=f"Added {student.full_name} ({code}) to {classroom.name}.",
             student=self._to_read(student, classroom.name),
+        )
+
+    async def import_students(
+        self, teacher_id: int, payload: ImportStudentsInput
+    ) -> ImportStudentsOutput:
+        """Enrol a whole roster, skipping rows that clash instead of failing.
+
+        A spreadsheet almost always contains a few duplicates, so one bad row
+        must not discard the rest of the import.
+
+        Raises:
+            ClassNotFoundError: If the target class does not exist.
+        """
+        classroom = await self._classes.resolve(teacher_id, payload.class_name)
+        added: list[StudentRead] = []
+        skipped: list[str] = []
+        seen: set[str] = set()
+
+        for row in payload.students:
+            code = normalize_code(row.student_code)
+            if code in seen:
+                skipped.append(f"{row.full_name} ({code}): repeated in the file.")
+                continue
+            seen.add(code)
+
+            existing = await self._students.get_by_code_in_class(classroom.id, code)
+            if existing is not None:
+                skipped.append(
+                    f"{row.full_name} ({code}): ID already used by {existing.full_name}."
+                )
+                continue
+
+            student = await self._students.add(
+                Student(
+                    class_id=classroom.id,
+                    student_code=code,
+                    full_name=row.full_name,
+                    email=row.email,
+                    phone=row.phone,
+                    note=row.note,
+                )
+            )
+            added.append(self._to_read(student, classroom.name))
+
+        logger.info(
+            "Roster imported",
+            extra={
+                "teacher_id": teacher_id,
+                "class_id": classroom.id,
+                "added": len(added),
+                "skipped": len(skipped),
+            },
+        )
+        return ImportStudentsOutput(
+            message=f"Added {len(added)} student(s) to {classroom.name}.",
+            class_name=classroom.name,
+            added=len(added),
+            students=added,
+            skipped=skipped,
         )
 
     # --------------------------------------------------------------- remove --

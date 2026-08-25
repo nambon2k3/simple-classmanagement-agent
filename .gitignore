@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Uploaded class rail icons
+data/class-icons/
+
 # Python
 __pycache__/
 *.py[cod]

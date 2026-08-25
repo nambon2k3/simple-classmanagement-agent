@@ -202,6 +202,19 @@ async def test_attendance_can_be_recorded_for_a_past_date(services, teacher, ros
     assert result.session.session_date == yesterday
 
 
+async def test_get_session_for_date_does_not_return_another_day(services, teacher, roster):
+    yesterday = today() - timedelta(days=1)
+    old = await services.attendance.start_attendance(
+        teacher.id,
+        StartAttendanceInput(class_name="SE401", session_date=yesterday.isoformat()),
+    )
+    assert await services.attendance.get_session_for_date(teacher.id, "SE401", today()) is None
+    loaded = await services.attendance.get_session_for_date(teacher.id, "SE401", yesterday)
+    assert loaded is not None
+    assert loaded.session_id == old.session.session_id
+    assert loaded.session_date == yesterday
+
+
 async def test_cancelling_leaves_nothing_final(services, teacher, roster):
     await start(services, teacher)
     await services.attendance.cancel_attendance(teacher.id, CancelAttendanceInput())

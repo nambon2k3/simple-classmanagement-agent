@@ -132,6 +132,44 @@ class ListStudentsOutput(ToolOutput):
     total: int = Field(description="Number of students.")
 
 
+# --------------------------------------------------------- import_students --
+
+
+class ImportStudentRow(ToolInput):
+    """One student from an uploaded roster file."""
+
+    student_code: StudentCode = Field(description="Student ID within the class.")
+    full_name: PersonName = Field(description="Student's full name.")
+    email: EmailAddress | None = Field(default=None, description="Optional contact email.")
+    phone: PhoneNumber | None = Field(default=None, description="Optional phone number.")
+    note: ShortText | None = Field(default=None, description="Optional note.")
+
+    @field_validator("full_name")
+    @classmethod
+    def _check_full_name(cls, value: str) -> str:
+        return validate_meaningful_name(value, "student name")
+
+
+class ImportStudentsInput(ToolInput):
+    """Arguments for enrolling a whole roster at once."""
+
+    class_name: ClassName = Field(description="Class to enrol everyone into.")
+    students: list[ImportStudentRow] = Field(description="Rows read from the roster file.")
+
+
+class ImportStudentsOutput(OperationResult):
+    """Result of a roster import."""
+
+    class_name: str = Field(description="Class the roster was added to.")
+    added: int = Field(description="How many students were enrolled.")
+    students: list[StudentRead] = Field(
+        default_factory=list, description="The students that were enrolled."
+    )
+    skipped: list[str] = Field(
+        default_factory=list, description="One teacher-facing reason per row that was not enrolled."
+    )
+
+
 # ---------------------------------------------------------- search_student --
 
 

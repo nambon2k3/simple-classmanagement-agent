@@ -15,6 +15,7 @@ from app.models.base import Base, BigIntPk, IdMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.attendance import AttendanceSession
+    from app.models.schedule import ClassExtraSession, ClassScheduleRule
     from app.models.student import Student
     from app.models.teacher import Teacher
 
@@ -55,6 +56,18 @@ class Classroom(IdMixin, TimestampMixin, Base):
         order_by="Student.full_name",
     )
     attendance_sessions: Mapped[list[AttendanceSession]] = relationship(
+        back_populates="classroom",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise_on_sql",
+    )
+    schedule_rules: Mapped[list[ClassScheduleRule]] = relationship(
+        back_populates="classroom",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise_on_sql",
+    )
+    extra_sessions: Mapped[list[ClassExtraSession]] = relationship(
         back_populates="classroom",
         cascade="all, delete-orphan",
         passive_deletes=True,

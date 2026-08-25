@@ -40,6 +40,7 @@ COPY --chown=app:app scripts ./scripts
 
 USER app
 
+# One process serves both the JSON API and the HTML/CSS/JS dashboard.
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

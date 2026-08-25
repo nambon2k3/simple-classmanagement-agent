@@ -11,13 +11,18 @@ from app.schemas.teacher import TeacherIdentity
 
 logger = get_logger(__name__)
 
+#: Sentinel ``telegram_id`` for a local administrator created by the web
+#: dashboard when the database has no teachers yet.  Real Telegram user ids are
+#: always positive, so this never collides with a bot account.
+LOCAL_ADMIN_TELEGRAM_ID = 0
+
 
 class TeacherService:
-    """Maps a Telegram account onto a teacher record.
+    """Ownership boundary for teacher accounts.
 
-    This is the application's authentication boundary: every other service
-    takes a ``teacher_id`` that originated here, which is what guarantees a
-    teacher can only ever reach their own data.
+    Telegram onboarding still goes through :meth:`get_or_create`.  The web
+    dashboard uses :meth:`ensure_administrator`, which attaches to an existing
+    teacher (so bot-created data is visible) or creates a local admin.
     """
 
     def __init__(
@@ -69,6 +74,28 @@ class TeacherService:
         teacher.username = identity.username
         teacher.language_code = identity.language_code or teacher.language_code
         await self._teachers.flush()
+        return teacher
+
+    async def ensure_administrator(self) -> Teacher:
+        """Return the teacher the web dashboard should operate as.
+
+        Prefers the earliest active teacher so existing classes created via the
+        bot (or a previous dashboard session) stay in view.  When the table is
+        empty, creates a local administrator.  The Telegram allow-list does not
+        apply: this is a local console, not a bot user.
+        """
+        existing = [row for row in await self._teachers.list_all() if row.is_active]
+        if existing:
+            return min(existing, key=lambda row: row.id)
+
+        teacher = await self._teachers.add(
+            Teacher(
+                telegram_id=LOCAL_ADMIN_TELEGRAM_ID,
+                full_name="Administrator",
+                username="admin",
+            )
+        )
+        logger.info("Local administrator created", extra={"teacher_id": teacher.id})
         return teacher
 
     def _assert_allowed(self, telegram_id: int) -> None:

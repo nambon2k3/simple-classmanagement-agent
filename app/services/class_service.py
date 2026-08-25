@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 from app.models.classroom import Classroom
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.class_repository import ClassRepository
+from app.repositories.tuition_charge_repository import TuitionChargeRepository
 from app.schemas.classroom import (
     ClassInfoInput,
     ClassInfoOutput,
@@ -41,15 +42,18 @@ class ClassService:
         self,
         class_repository: ClassRepository,
         attendance_repository: AttendanceRepository,
+        tuition_charge_repository: TuitionChargeRepository,
     ) -> None:
         """Wire the service to its data sources.
 
         Args:
             class_repository: Access to the ``classes`` table.
             attendance_repository: Used to enrich class info with session data.
+            tuition_charge_repository: Recalculates unpaid charges when the fee changes.
         """
         self._classes = class_repository
         self._attendance = attendance_repository
+        self._charges = tuition_charge_repository
 
     # ----------------------------------------------------------- resolution --
 
@@ -211,6 +215,7 @@ class ClassService:
         classroom = await self.resolve(teacher_id, payload.class_name)
         classroom.daily_tuition_fee = payload.daily_tuition_fee
         await self._classes.flush()
+        await self._charges.update_not_yet_amounts(classroom.id, payload.daily_tuition_fee)
         logger.info(
             "Class tuition fee updated",
             extra={
@@ -228,6 +233,17 @@ class ClassService:
                 f"{format_vnd(classroom.daily_tuition_fee)} per attended day."
             ),
         )
+
+    async def set_class_description(
+        self, teacher_id: int, class_id: int, description: str | None
+    ) -> Classroom:
+        """Update the free-text description of an owned class."""
+        classroom = await self._classes.get_owned(class_id, teacher_id)
+        if classroom is None:
+            raise ClassNotFoundError("I couldn't find that class.")
+        classroom.description = description
+        await self._classes.flush()
+        return classroom
 
 
 def _class_read(classroom: Classroom, *, student_count: int) -> ClassRead:

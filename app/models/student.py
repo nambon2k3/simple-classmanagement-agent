@@ -12,6 +12,7 @@ from app.models.base import Base, BigIntPk, IdMixin, TimestampMixin
 if TYPE_CHECKING:
     from app.models.attendance import AttendanceRecord
     from app.models.classroom import Classroom
+    from app.models.tuition import TuitionCharge
 
 
 class Student(IdMixin, TimestampMixin, Base):
@@ -41,6 +42,12 @@ class Student(IdMixin, TimestampMixin, Base):
 
     classroom: Mapped[Classroom] = relationship(back_populates="students", lazy="raise_on_sql")
     attendance_records: Mapped[list[AttendanceRecord]] = relationship(
+        back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise_on_sql",
+    )
+    tuition_charges: Mapped[list[TuitionCharge]] = relationship(
         back_populates="student",
         cascade="all, delete-orphan",
         passive_deletes=True,

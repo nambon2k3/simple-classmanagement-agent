@@ -103,6 +103,42 @@ class AttendanceRepository(BaseRepository[AttendanceSession]):
         )
         return list(result)
 
+    async def list_session_dates_for_class(
+        self, class_id: int, *, since: date | None = None
+    ) -> list[date]:
+        """Dates a class actually met, oldest first, ignoring cancelled days."""
+        statement = select(AttendanceSession.session_date).where(
+            AttendanceSession.class_id == class_id,
+            AttendanceSession.status != AttendanceSessionStatus.CANCELLED,
+        )
+        if since is not None:
+            statement = statement.where(AttendanceSession.session_date > since)
+        result = await self.session.scalars(statement.order_by(AttendanceSession.session_date))
+        return list(result)
+
+    async def list_marks_for_class(
+        self, class_id: int, *, since: date | None = None
+    ) -> list[tuple[int, date, AttendanceStatus]]:
+        """Every ``(student_id, date, status)`` mark for a class, oldest first."""
+        statement = (
+            select(
+                AttendanceRecord.student_id,
+                AttendanceSession.session_date,
+                AttendanceRecord.status,
+            )
+            .join(AttendanceSession, AttendanceRecord.session_id == AttendanceSession.id)
+            .where(
+                AttendanceSession.class_id == class_id,
+                AttendanceSession.status != AttendanceSessionStatus.CANCELLED,
+            )
+        )
+        if since is not None:
+            statement = statement.where(AttendanceSession.session_date > since)
+        result = await self.session.execute(statement.order_by(AttendanceSession.session_date))
+        return [
+            (student_id, day, AttendanceStatus(status)) for student_id, day, status in result.all()
+        ]
+
     async def count_for_class(self, class_id: int) -> int:
         """Total number of attendance sessions ever held for a class."""
         return (
@@ -302,9 +338,7 @@ class AttendanceRepository(BaseRepository[AttendanceSession]):
         )
         return [(student, count) for student, count in result.all()]
 
-    async def count_teaching_days_for_class(
-        self, class_id: int, start: date, end: date
-    ) -> int:
+    async def count_teaching_days_for_class(self, class_id: int, start: date, end: date) -> int:
         """Number of completed attendance sessions for one class in a range."""
         return (
             await self.session.scalar(
@@ -317,9 +351,7 @@ class AttendanceRepository(BaseRepository[AttendanceSession]):
             )
         ) or 0
 
-    async def count_teaching_days_for_teacher(
-        self, teacher_id: int, start: date, end: date
-    ) -> int:
+    async def count_teaching_days_for_teacher(self, teacher_id: int, start: date, end: date) -> int:
         """Distinct calendar days with a completed session across all classes."""
         return (
             await self.session.scalar(

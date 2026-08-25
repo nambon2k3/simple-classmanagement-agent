@@ -14,6 +14,7 @@ from app.models.enums import AttendanceSessionStatus, AttendanceStatus
 if TYPE_CHECKING:
     from app.models.classroom import Classroom
     from app.models.student import Student
+    from app.models.tuition import TuitionCharge
 
 
 def _pg_enum(enum_type: type, name: str) -> Enum:
@@ -69,6 +70,12 @@ class AttendanceSession(IdMixin, TimestampMixin, Base):
         back_populates="attendance_sessions", lazy="raise_on_sql"
     )
     records: Mapped[list[AttendanceRecord]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise_on_sql",
+    )
+    tuition_charges: Mapped[list[TuitionCharge]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         passive_deletes=True,

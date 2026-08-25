@@ -13,13 +13,18 @@ from functools import cached_property
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.repositories.activity_repository import ActivityRepository
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.class_repository import ClassRepository
+from app.repositories.schedule_repository import ScheduleRepository
 from app.repositories.student_repository import StudentRepository
 from app.repositories.teacher_repository import TeacherRepository
+from app.repositories.tuition_charge_repository import TuitionChargeRepository
+from app.services.activity_service import ActivityService
 from app.services.attendance_service import AttendanceService
 from app.services.class_service import ClassService
 from app.services.report_service import ReportService
+from app.services.schedule_service import ScheduleService
 from app.services.student_service import StudentService
 from app.services.teacher_service import TeacherService
 from app.services.tuition_service import TuitionService
@@ -63,6 +68,21 @@ class ServiceContainer:
         """Data access for attendance sessions, records and aggregates."""
         return AttendanceRepository(self.session)
 
+    @cached_property
+    def schedule_repository(self) -> ScheduleRepository:
+        """Data access for weekly slots and extra sessions."""
+        return ScheduleRepository(self.session)
+
+    @cached_property
+    def tuition_charge_repository(self) -> TuitionChargeRepository:
+        """Data access for billed attendance days."""
+        return TuitionChargeRepository(self.session)
+
+    @cached_property
+    def activity_repository(self) -> ActivityRepository:
+        """Read-only access to the audit columns behind the activity feed."""
+        return ActivityRepository(self.session)
+
     # ------------------------------------------------------------- services --
 
     @cached_property
@@ -73,7 +93,11 @@ class ServiceContainer:
     @cached_property
     def classes(self) -> ClassService:
         """Class creation, renaming, deletion and lookup."""
-        return ClassService(self.class_repository, self.attendance_repository)
+        return ClassService(
+            self.class_repository,
+            self.attendance_repository,
+            self.tuition_charge_repository,
+        )
 
     @cached_property
     def students(self) -> StudentService:
@@ -88,7 +112,13 @@ class ServiceContainer:
             self.student_repository,
             self.classes,
             self.students,
+            self.tuition_charge_repository,
         )
+
+    @cached_property
+    def schedule(self) -> ScheduleService:
+        """Weekly timetable and extra sessions."""
+        return ScheduleService(self.schedule_repository, self.class_repository)
 
     @cached_property
     def reports(self) -> ReportService:
@@ -101,10 +131,17 @@ class ServiceContainer:
         )
 
     @cached_property
+    def activity(self) -> ActivityService:
+        """Recent changes across classes, students, attendance and tuition."""
+        return ActivityService(self.activity_repository)
+
+    @cached_property
     def tuition(self) -> TuitionService:
         """Tuition fee settings and billing reports."""
         return TuitionService(
             self.attendance_repository,
             self.class_repository,
             self.classes,
+            self.tuition_charge_repository,
+            self.student_repository,
         )

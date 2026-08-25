@@ -117,6 +117,13 @@ class EmptyClassError(ValidationError):
     default_message = "That class has no students yet."
 
 
+class ScheduleConflictError(ConflictError):
+    """A weekly slot or extra session already exists for that class."""
+
+    code = "schedule_conflict"
+    default_message = "That schedule slot already exists."
+
+
 # -------------------------------------------------------------- students ----
 
 

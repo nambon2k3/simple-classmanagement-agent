@@ -47,27 +47,26 @@ tools is a thin wrapper over a service, and the service does the validating,
 the authorising and the writing.
 
 ```
-        Telegram
-           │  message / button press
-           ▼
-   ┌───────────────────┐
-   │ telegram/         │  transport only: routing, keyboards, rendering
-   └─────────┬─────────┘
-             │
-     ┌───────┴────────┐
-     │                │  buttons skip the model entirely
-     ▼                │
-┌─────────┐           │
-│  ai/    │           │  intent → tool name + JSON arguments
-│  agent  │           │
-└────┬────┘           │
-     │ tool call      │
-     ▼                │
-┌──────────────────┐  │
-│ ai/tools/registry│  │  ← validation boundary (Pydantic, ownership, errors)
-└────┬─────────────┘  │
-     │                │
-     ▼                ▼
+        Telegram            Browser (HTML/CSS/JS)
+           │                     │  fetch() → JSON
+           ▼                     ▼
+   ┌───────────────────┐  ┌─────────────────┐
+   │ telegram/         │  │ api/ + web/     │  transport only
+   └─────────┬─────────┘  └────────┬────────┘
+             │                     │
+     ┌───────┴────────┐            │  buttons and forms skip the model
+     ▼                │            │
+┌─────────┐           │            │
+│  ai/    │           │            │
+│  agent  │           │            │
+└────┬────┘           │            │
+     │ tool call      │            │
+     ▼                ▼            ▼
+┌──────────────────┐
+│ ai/tools/registry│  ← validation boundary (Pydantic, ownership, errors)
+└────┬─────────────┘
+     │
+     ▼
 ┌────────────────────────┐
 │ services/              │  all business rules live here
 └──────────┬─────────────┘
@@ -84,6 +83,7 @@ the authorising and the writing.
 | Layer | Responsibility | Explicitly not allowed to |
 | --- | --- | --- |
 | `telegram/` | Route updates, render messages, build keyboards | Contain business rules |
+| `api/` + `web/` | Expose services as JSON, serve the HTML/CSS/JS dashboard | Contain business rules |
 | `ai/` | Understand intent, choose tools, phrase replies | Touch the database or decide policy |
 | `ai/tools/` | Validate arguments, dispatch, serialise errors | Implement behaviour |
 | `services/` | Business rules, validation, authorisation | Build SQL, know about Telegram |
@@ -106,8 +106,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This starts PostgreSQL, applies migrations, and runs the API plus the bot in
-polling mode. Message your bot on Telegram and send `/start`.
+This starts PostgreSQL, applies migrations, and runs the API, the bot in
+polling mode, and the web dashboard — all in one process on port 8000. Open
+http://localhost:8000, or message the Telegram bot and send `/start`.
 
 ### Locally with Pipenv
 
@@ -120,8 +121,32 @@ pipenv run alembic upgrade head
 pipenv run uvicorn app.main:app --reload
 ```
 
-The bot starts alongside the API. Health checks live at `/health/live` and
-`/health/ready`; API docs at `/docs` outside production.
+The bot starts alongside the API, and the same process serves the dashboard at
+`/`. Health checks live at `/health/live` and `/health/ready`; API docs at
+`/docs` outside production.
+
+### Web dashboard
+
+A Discord-style administrator dashboard built with plain HTML, CSS and
+JavaScript (no build step), served by FastAPI from `app/web/static/` and backed
+by the JSON API under `/api`. The layout mirrors Discord: a server rail of class
+icons on the far left, a channel sidebar (students, attendance, reports,
+class-info) beside it, the main content pane, and a contextual right sidebar
+(the member list, today's attendance summary, class details, and so on).
+
+There is no login: it attaches to the existing teacher in the database (or
+creates a local admin), and the AI chat calls the Groq LLM API with the same
+tools as the rest of the app.
+
+```bash
+pipenv install --dev
+docker compose up -d db
+pipenv run alembic upgrade head
+pipenv run uvicorn app.main:app --reload
+```
+
+Open http://localhost:8000. With Docker, `docker compose up --build` serves it
+on the same port.
 
 ---
 
@@ -208,7 +233,7 @@ app/
 │       ├── definitions.py  the tool catalogue
 │       ├── registry.py     validation boundary and dispatch
 │       └── schema.py       Pydantic → strict JSON Schema
-├── api/                    health probes, Telegram webhook, error mapping
+├── api/                    JSON API, health probes, Telegram webhook, error mapping
 ├── core/                   config, logging, exception hierarchy
 ├── database/               engine and session lifecycle
 ├── models/                 SQLAlchemy 2.0 ORM models
@@ -217,6 +242,7 @@ app/
 ├── services/               business rules
 │   └── container.py        composition root
 ├── telegram/               handlers, keyboards, rendering
+├── web/                    runtime + static HTML/CSS/JS dashboard
 ├── utils/                  date and text helpers
 └── main.py                 FastAPI app + bot lifecycle
 ```

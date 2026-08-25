@@ -142,9 +142,7 @@ class ClassInfoOutput(ToolOutput):
     has_open_session: bool = Field(
         default=False, description="Whether an attendance session is currently open."
     )
-    daily_tuition_fee: int = Field(
-        default=0, description="Daily tuition in VND per attended day."
-    )
+    daily_tuition_fee: int = Field(default=0, description="Daily tuition in VND per attended day.")
     formatted_daily_tuition_fee: str = Field(
         description="Human-readable daily tuition, for example '50.000 VND'."
     )

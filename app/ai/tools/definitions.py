@@ -67,7 +67,7 @@ from app.schemas.tuition import (
 )
 
 #: Key under which a handler publishes the attendance session it just touched,
-#: so the Telegram layer can render or refresh the inline keyboard.
+#: so the presentation layer can render or refresh the attendance board.
 EMIT_ATTENDANCE_SESSION = "attendance_session"
 #: Key set when a session was finalised or abandoned, clearing the focus.
 EMIT_ATTENDANCE_CLOSED = "attendance_closed"

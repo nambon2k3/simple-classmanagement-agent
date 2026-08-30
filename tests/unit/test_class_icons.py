@@ -1,10 +1,10 @@
-"""Class rail avatar helpers."""
+"""Class image helpers."""
 
 from __future__ import annotations
 
 import pytest
 
-from app.utils.class_icons import class_icon_data_uri, class_initials, save_class_icon
+from app.utils.class_icons import class_initials, validate_class_image
 
 
 @pytest.mark.parametrize(
@@ -22,14 +22,15 @@ def test_class_initials(name: str, expected: str) -> None:
     assert class_initials(name) == expected
 
 
-def test_save_and_load_class_icon(tmp_path) -> None:
-    save_class_icon(7, "icon.png", b"\x89PNG", directory=tmp_path)
-    uri = class_icon_data_uri(7, directory=tmp_path)
-    assert uri is not None
-    assert uri.startswith("data:image/png;base64,")
-    assert class_icon_data_uri(8, directory=tmp_path) is None
+def test_validate_class_image_accepts_png() -> None:
+    assert validate_class_image("icon.png", b"\x89PNG") == "image/png"
 
 
-def test_save_class_icon_rejects_unknown_type(tmp_path) -> None:
+def test_validate_class_image_rejects_unknown_type() -> None:
     with pytest.raises(ValueError, match="PNG"):
-        save_class_icon(1, "icon.txt", b"hello", directory=tmp_path)
+        validate_class_image("icon.txt", b"hello")
+
+
+def test_validate_class_image_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        validate_class_image("icon.png", b"")

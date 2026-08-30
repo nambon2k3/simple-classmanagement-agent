@@ -25,6 +25,9 @@ class ClassRead(ToolOutput):
         default=0,
         description="Daily tuition in VND charged per student for each attended day.",
     )
+    has_icon: bool = Field(
+        default=False, description="Whether the class has an uploaded image."
+    )
 
 
 # ------------------------------------------------------------ create_class --

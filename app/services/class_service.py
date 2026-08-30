@@ -25,6 +25,7 @@ from app.schemas.classroom import (
     RenameClassOutput,
 )
 from app.schemas.tuition import SetClassTuitionFeeInput, SetClassTuitionFeeOutput
+from app.utils.class_icons import validate_class_image
 from app.utils.money import format_vnd
 
 logger = get_logger(__name__)
@@ -245,6 +246,28 @@ class ClassService:
         await self._classes.flush()
         return classroom
 
+    async def set_class_icon(
+        self, teacher_id: int, class_id: int, filename: str, data: bytes
+    ) -> Classroom:
+        """Replace the class image stored on the class row."""
+        classroom = await self._classes.get_owned(class_id, teacher_id)
+        if classroom is None:
+            raise ClassNotFoundError("I couldn't find that class.")
+        classroom.icon_mime = validate_class_image(filename, data)
+        classroom.icon_data = data
+        await self._classes.flush()
+        logger.info("Class image updated", extra={"teacher_id": teacher_id, "class_id": class_id})
+        return classroom
+
+    async def get_class_icon(self, teacher_id: int, class_id: int) -> tuple[bytes, str] | None:
+        """Return ``(bytes, mime)`` for the class image, or ``None`` if unset."""
+        classroom = await self._classes.get_owned_with_icon(class_id, teacher_id)
+        if classroom is None:
+            raise ClassNotFoundError("I couldn't find that class.")
+        if classroom.icon_data is None or classroom.icon_mime is None:
+            return None
+        return classroom.icon_data, classroom.icon_mime
+
 
 def _class_read(classroom: Classroom, *, student_count: int) -> ClassRead:
     """Project a classroom ORM row onto the teacher-facing read model."""
@@ -254,4 +277,5 @@ def _class_read(classroom: Classroom, *, student_count: int) -> ClassRead:
         description=classroom.description,
         student_count=student_count,
         daily_tuition_fee=classroom.daily_tuition_fee,
+        has_icon=classroom.icon_mime is not None,
     )

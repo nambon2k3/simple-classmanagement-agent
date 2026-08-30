@@ -1,8 +1,9 @@
 """HTTP translation of domain errors.
 
-The API surface reuses the same exception hierarchy as the bot, so a service
-raising :class:`~app.core.exceptions.ClassNotFoundError` produces a ``404``
-here and a friendly sentence in Telegram, with no duplicated mapping logic.
+The API surface reuses the same exception hierarchy as the services, so a
+service raising :class:`~app.core.exceptions.ClassNotFoundError` produces a
+``404`` here and a friendly sentence in the chat, with no duplicated mapping
+logic.
 """
 
 from __future__ import annotations

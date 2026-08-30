@@ -54,3 +54,24 @@ class ScheduleOccurrence(AppModel):
     kind: Literal["weekly", "extra"]
     extra_id: int | None = None
     note: ShortText | None = None
+    completed: bool = False
+    cancelled: bool = False
+
+
+class TodaySlot(AppModel):
+    """One meeting time for a class on the current day."""
+
+    start_time: time
+    end_time: time
+    kind: Literal["weekly", "extra"]
+
+
+class TodayClassRead(AppModel):
+    """A class scheduled today, with whether its teaching day is finished."""
+
+    class_id: int
+    class_name: str
+    slots: list[TodaySlot]
+    completed: bool
+    cancelled: bool = False
+    student_count: int

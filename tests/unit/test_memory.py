@@ -80,9 +80,7 @@ def test_clearing_attendance_focus_keeps_the_class_focus():
         teacher_id=1,
         focus_class_id=3,
         focus_session_id=9,
-        attendance_message_id=42,
     )
     state.clear_attendance_focus()
     assert state.focus_class_id == 3
     assert state.focus_session_id is None
-    assert state.attendance_message_id is None

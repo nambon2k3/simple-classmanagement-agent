@@ -15,7 +15,7 @@ class AttendanceStatus(StrEnum):
 
     @property
     def emoji(self) -> str:
-        """Icon used when rendering the status in Telegram."""
+        """Icon used when rendering the status in the UI."""
         return _STATUS_EMOJI[self]
 
     @property

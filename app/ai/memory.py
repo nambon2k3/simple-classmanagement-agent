@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 class ConversationState:
     """Everything remembered between two messages in one chat."""
 
-    #: Telegram chat the conversation belongs to.
+    #: Chat identifier the conversation belongs to.
     chat_id: int
     #: Teacher who owns the conversation.
     teacher_id: int
@@ -41,9 +41,6 @@ class ConversationState:
     focus_class_id: int | None = None
     #: Attendance session currently being filled in, if any.
     focus_session_id: int | None = None
-    #: Telegram message id of the live attendance keyboard, so it can be edited
-    #: in place instead of spamming the chat with new messages.
-    attendance_message_id: int | None = None
     #: Last time the conversation was touched; drives expiry.
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -68,7 +65,6 @@ class ConversationState:
     def clear_attendance_focus(self) -> None:
         """Forget the attendance session, e.g. after it has been finalised."""
         self.focus_session_id = None
-        self.attendance_message_id = None
 
 
 @runtime_checkable

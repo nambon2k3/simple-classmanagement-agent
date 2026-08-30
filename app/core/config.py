@@ -17,14 +17,13 @@ from pydantic import Field, SecretStr, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "development", "staging", "production"]
-TelegramMode = Literal["polling", "webhook"]
 
 
 class Settings(BaseSettings):
     """Strongly typed application settings.
 
     Attributes are populated from environment variables using the field name in
-    upper case (for example ``telegram_bot_token`` reads ``TELEGRAM_BOT_TOKEN``).
+    upper case (for example ``groq_api_key`` reads ``GROQ_API_KEY``).
     """
 
     model_config = SettingsConfigDict(
@@ -52,17 +51,6 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)
     db_pool_pre_ping: bool = True
-
-    # ------------------------------------------------------------ telegram --
-    telegram_bot_token: SecretStr = SecretStr("")
-    telegram_mode: TelegramMode = "polling"
-    telegram_webhook_url: str | None = None
-    telegram_webhook_secret: SecretStr | None = None
-
-    #: Optional allow-list of Telegram user ids.  When empty the bot onboards
-    #: any user as a teacher, which is the sensible default for a single-school
-    #: deployment.  Populate it to lock the bot down.
-    telegram_allowed_user_ids: list[int] = Field(default_factory=list)
 
     # --------------------------------------------------------------- groq ----
     #: API key from https://console.groq.com/keys
@@ -123,7 +111,7 @@ class Settings(BaseSettings):
         if "prompt-guard" in lowered or "llama-guard" in lowered:
             raise ValueError(
                 f"GROQ_MODEL={value!r} is a security classifier, not a chat assistant. "
-                "Use llama-3.3-70b-versatile or llama-3.1-8b-instant for this bot."
+                "Use llama-3.3-70b-versatile or llama-3.1-8b-instant."
             )
         return value
 

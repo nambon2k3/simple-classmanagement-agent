@@ -87,7 +87,7 @@ class ServiceContainer:
 
     @cached_property
     def teachers(self) -> TeacherService:
-        """Onboarding and authorisation of Telegram users."""
+        """Onboarding and authorisation of teacher accounts."""
         return TeacherService(self.teacher_repository, self.settings)
 
     @cached_property

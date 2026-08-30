@@ -1,6 +1,6 @@
 # Class Management Assistant
 
-An AI-powered Telegram bot that lets teachers run their classes by talking
+An AI-powered web assistant that lets teachers run their classes by talking
 normally, instead of navigating menus:
 
 ```
@@ -47,21 +47,21 @@ tools is a thin wrapper over a service, and the service does the validating,
 the authorising and the writing.
 
 ```
-        Telegram            Browser (HTML/CSS/JS)
-           │                     │  fetch() → JSON
-           ▼                     ▼
-   ┌───────────────────┐  ┌─────────────────┐
-   │ telegram/         │  │ api/ + web/     │  transport only
-   └─────────┬─────────┘  └────────┬────────┘
-             │                     │
-     ┌───────┴────────┐            │  buttons and forms skip the model
-     ▼                │            │
-┌─────────┐           │            │
-│  ai/    │           │            │
-│  agent  │           │            │
-└────┬────┘           │            │
-     │ tool call      │            │
-     ▼                ▼            ▼
+        Browser (HTML/CSS/JS)
+           │  fetch() → JSON
+           ▼
+   ┌─────────────────┐
+   │ api/ + web/     │  transport only
+   └────────┬────────┘
+            │
+            │  buttons and forms skip the model
+            │
+┌─────────┐ │
+│  ai/    │ │
+│  agent  │ │
+└────┬────┘ │
+     │ tool call
+     ▼      ▼
 ┌──────────────────┐
 │ ai/tools/registry│  ← validation boundary (Pydantic, ownership, errors)
 └────┬─────────────┘
@@ -82,11 +82,10 @@ the authorising and the writing.
 
 | Layer | Responsibility | Explicitly not allowed to |
 | --- | --- | --- |
-| `telegram/` | Route updates, render messages, build keyboards | Contain business rules |
 | `api/` + `web/` | Expose services as JSON, serve the HTML/CSS/JS dashboard | Contain business rules |
 | `ai/` | Understand intent, choose tools, phrase replies | Touch the database or decide policy |
 | `ai/tools/` | Validate arguments, dispatch, serialise errors | Implement behaviour |
-| `services/` | Business rules, validation, authorisation | Build SQL, know about Telegram |
+| `services/` | Business rules, validation, authorisation | Build SQL |
 | `repositories/` | Queries and aggregation | Contain business rules |
 | `models/` | Schema and relationships | Contain behaviour beyond projections |
 
@@ -101,14 +100,13 @@ model at all — which is exactly how the test suite drives them.
 
 ```bash
 cp .env.example .env
-# Fill in TELEGRAM_BOT_TOKEN (from @BotFather) and GROQ_API_KEY (from GroqCloud).
+# Fill in GROQ_API_KEY (from GroqCloud).
 
 docker compose up --build
 ```
 
-This starts PostgreSQL, applies migrations, and runs the API, the bot in
-polling mode, and the web dashboard — all in one process on port 8000. Open
-http://localhost:8000, or message the Telegram bot and send `/start`.
+This starts PostgreSQL, applies migrations, and runs the API and the web
+dashboard — all in one process on port 8000. Open http://localhost:8000.
 
 ### Locally with Pipenv
 
@@ -121,9 +119,8 @@ pipenv run alembic upgrade head
 pipenv run uvicorn app.main:app --reload
 ```
 
-The bot starts alongside the API, and the same process serves the dashboard at
-`/`. Health checks live at `/health/live` and `/health/ready`; API docs at
-`/docs` outside production.
+The same process serves the dashboard at `/`. Health checks live at
+`/health/live` and `/health/ready`; API docs at `/docs` outside production.
 
 ### Web dashboard
 
@@ -158,14 +155,11 @@ list. The settings that matter most:
 
 | Variable | Default | Why you would change it |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | — | Required. From `@BotFather`. |
 | `GROQ_API_KEY` | — | Required. From [GroqCloud API Keys](https://console.groq.com/keys). |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Any Groq model with tool calling. |
 | `GROQ_TIMEOUT_SECONDS` | `120` | HTTP timeout for Groq requests. |
 | `DATABASE_URL` | local PostgreSQL | The `+asyncpg` driver is added for you if you omit it. |
 | `TIMEZONE` | `UTC` | **Set this.** It decides what "today" means for attendance and reports. |
-| `TELEGRAM_MODE` | `polling` | `webhook` for production behind a public URL. |
-| `TELEGRAM_ALLOWED_USER_IDS` | `[]` (open) | Lock the bot to specific Telegram accounts. |
 | `CONVERSATION_TTL_SECONDS` | `1800` | How long "John absent" keeps working without repeating the class. |
 | `MAX_TOOL_ITERATIONS` | `8` | Safety valve on a model that loops. |
 
@@ -233,7 +227,7 @@ app/
 │       ├── definitions.py  the tool catalogue
 │       ├── registry.py     validation boundary and dispatch
 │       └── schema.py       Pydantic → strict JSON Schema
-├── api/                    JSON API, health probes, Telegram webhook, error mapping
+├── api/                    JSON API, health probes, error mapping
 ├── core/                   config, logging, exception hierarchy
 ├── database/               engine and session lifecycle
 ├── models/                 SQLAlchemy 2.0 ORM models
@@ -241,10 +235,9 @@ app/
 ├── schemas/                Pydantic contracts (tool inputs and outputs)
 ├── services/               business rules
 │   └── container.py        composition root
-├── telegram/               handlers, keyboards, rendering
 ├── web/                    runtime + static HTML/CSS/JS dashboard
 ├── utils/                  date and text helpers
-└── main.py                 FastAPI app + bot lifecycle
+└── main.py                 FastAPI app lifecycle
 ```
 
 ### Data model
@@ -276,7 +269,7 @@ repository query filters by ownership in its `WHERE` clause.
 
 **Sessions are database state, not chat state.** An attendance session is
 "active" because a row says `open`. Conversation memory only supplies a hint
-about which class is in focus. Restart the bot mid-roll-call and nothing is
+about which class is in focus. Restart the server mid-roll-call and nothing is
 lost; let the context expire and the teacher just names the class again.
 
 **Buttons and typing share one implementation.** Each attendance operation has
@@ -291,15 +284,9 @@ validation keywords stripped. Nothing is lost by stripping them, because the
 arguments are re-validated against the real model before any service runs —
 the schema is a hint, not the enforcement boundary.
 
-**Two parse modes, on purpose.** Messages the application composes are sent as
-HTML, where every dynamic value can be escaped with certainty. Free text from
-the model is sent as Markdown with a plain-text fallback, because escaping the
-model's own formatting would show teachers literal asterisks.
-
 **A known trade-off:** the database transaction stays open across the model
 round trip, because tools need it mid-loop. That is fine at this scale; a
-high-traffic deployment would give each tool call its own session. The comment
-in `telegram/handlers/messages.py` says so at the call site.
+high-traffic deployment would give each tool call its own session.
 
 ---
 
@@ -308,7 +295,7 @@ in `telegram/handlers/messages.py` says so at the call site.
 ```bash
 pipenv install --dev
 
-pipenv run pytest                 # 165 tests
+pipenv run pytest                 # tests
 pipenv run pytest tests/unit -q   # fast, no database
 pipenv run ruff check app tests
 pipenv run ruff format app tests
@@ -326,7 +313,6 @@ real database, which is what proves the loop end to end:
 | --- | --- |
 | `unit/test_tool_schema.py` | Every registered tool emits a valid strict schema |
 | `unit/test_registry.py` | Bad JSON, missing and hallucinated arguments, domain vs. unexpected errors |
-| `unit/test_keyboards.py` | Callback round-trips, the 64-byte limit, pagination |
 | `unit/test_text.py` | Each matching tier, accents, ambiguity |
 | `unit/test_memory.py` | TTL expiry, history trimming, purging |
 | `integration/test_attendance_flow.py` | The whole workflow, including cross-teacher isolation |
@@ -354,18 +340,6 @@ a deploy cannot start against a stale schema. The image is multi-stage, installs
 with `pipenv install --deploy` (which fails if `Pipfile.lock` is out of date),
 and runs as an unprivileged user.
 
-### Webhook mode
-
-```env
-TELEGRAM_MODE=webhook
-TELEGRAM_WEBHOOK_URL=https://your-domain.example/telegram/webhook
-TELEGRAM_WEBHOOK_SECRET=a-long-random-string
-```
-
-The webhook is registered on startup. The route authenticates the secret
-header, enqueues the update and returns immediately, so Telegram never retries
-an update that is already being handled.
-
 ---
 
 ## Extending the system
@@ -375,7 +349,7 @@ The seams that were left deliberately open:
 | You want to | Do this |
 | --- | --- |
 | Add a capability | Add a service method, a Pydantic input/output pair, and one `registry.register(...)` line. No prompt surgery needed. |
-| Run more than one bot process | Implement the `ConversationStore` protocol over Redis. Nothing outside `ai/memory.py` changes. |
+| Run more than one process | Implement the `ConversationStore` protocol over Redis. Nothing outside `ai/memory.py` changes. |
 | Support multiple schools | Add a `School` table and a nullable FK on `Teacher`. Ownership is already scoped through the teacher, so no query logic changes shape. |
 | Add roles and permissions | Extend `TeacherService`, which is the single authentication boundary. |
 | Import a roster from Excel | Add a service that calls `StudentService.add_student` per row; the validation and duplicate handling already exist. |

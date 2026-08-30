@@ -1,7 +1,7 @@
 [project]
 name = "class-management"
 version = "0.1.0"
-description = "AI-powered Telegram assistant for classroom management"
+description = "AI-powered assistant for classroom management"
 requires-python = ">=3.12"
 
 [tool.ruff]

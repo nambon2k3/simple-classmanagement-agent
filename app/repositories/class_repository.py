@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Select, func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, undefer
 
 from app.models.classroom import Classroom
 from app.models.student import Student
@@ -54,6 +54,14 @@ class ClassRepository(BaseRepository[Classroom]):
         )
         result = await self.session.execute(statement)
         return [(classroom, count) for classroom, count in result.all()]
+
+    async def get_owned_with_icon(self, class_id: int, teacher_id: int) -> Classroom | None:
+        """Fetch one class including its deferred image blob."""
+        return await self.session.scalar(
+            self._owned(teacher_id)
+            .where(Classroom.id == class_id)
+            .options(undefer(Classroom.icon_data))
+        )
 
     async def get_with_students(self, class_id: int, teacher_id: int) -> Classroom | None:
         """Fetch a class with its student collection eagerly loaded."""

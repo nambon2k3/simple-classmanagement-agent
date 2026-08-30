@@ -267,6 +267,64 @@ async def test_buttons_cannot_touch_a_closed_session(services, teacher, roster):
         )
 
 
+async def test_complete_teaching_day_marks_every_student_present(services, teacher, roster, classroom):
+    result = await services.attendance.complete_teaching_day(teacher.id, classroom.id)
+    assert result.summary.present == 3
+    assert result.summary.absent == 0
+    assert result.summary.unmarked == 0
+    loaded = await services.attendance.get_session_for_date(teacher.id, "SE401", today())
+    assert loaded is not None
+    assert loaded.status is AttendanceSessionStatus.COMPLETED
+    assert all(entry.status is AttendanceStatus.PRESENT for entry in loaded.entries)
+
+
+async def test_complete_teaching_day_overwrites_existing_absences(services, teacher, roster, classroom):
+    await start(services, teacher)
+    await services.attendance.update_attendance(
+        teacher.id, UpdateAttendanceInput(student="John", status=AttendanceStatus.ABSENT)
+    )
+    result = await services.attendance.complete_teaching_day(teacher.id, classroom.id)
+    assert result.summary.present == 3
+    assert result.summary.absent == 0
+    assert result.absent_students == []
+
+
+async def test_complete_teaching_day_refuses_an_already_finished_day(services, teacher, roster, classroom):
+    await services.attendance.complete_teaching_day(teacher.id, classroom.id)
+    with pytest.raises(AttendanceAlreadyTakenError):
+        await services.attendance.complete_teaching_day(teacher.id, classroom.id)
+
+
+async def test_cancel_teaching_day_marks_every_student_absent(services, teacher, roster, classroom):
+    result = await services.attendance.cancel_teaching_day(teacher.id, classroom.id)
+    assert result.summary.present == 0
+    assert result.summary.absent == 3
+    loaded = await services.attendance.get_session_for_date(teacher.id, "SE401", today())
+    assert loaded is not None
+    assert loaded.status is AttendanceSessionStatus.COMPLETED
+    assert all(entry.status is AttendanceStatus.ABSENT for entry in loaded.entries)
+    _completed, cancelled = await services.attendance.finalised_class_days(
+        teacher.id, today(), today()
+    )
+    assert (classroom.id, today()) in cancelled
+
+
+async def test_cancel_teaching_day_overwrites_existing_presents(services, teacher, roster, classroom):
+    await start(services, teacher)
+    await services.attendance.update_attendance(
+        teacher.id, UpdateAttendanceInput(student="John", status=AttendanceStatus.PRESENT)
+    )
+    result = await services.attendance.cancel_teaching_day(teacher.id, classroom.id)
+    assert result.summary.absent == 3
+    assert result.summary.present == 0
+
+
+async def test_cancel_teaching_day_refuses_an_already_finished_day(services, teacher, roster, classroom):
+    await services.attendance.complete_teaching_day(teacher.id, classroom.id)
+    with pytest.raises(AttendanceAlreadyTakenError):
+        await services.attendance.cancel_teaching_day(teacher.id, classroom.id)
+
+
 async def test_buttons_cannot_reach_another_teachers_session(services, teacher, roster):
     from app.schemas.teacher import TeacherIdentity
 

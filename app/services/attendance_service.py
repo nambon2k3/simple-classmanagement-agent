@@ -11,7 +11,7 @@ Each operation has two entry points that share one implementation:
 * a **conversational** one (``finish_attendance``) that resolves the session
   from a class name or a focus hint, used by the AI tools; and
 * a **direct** one (``finish_session``) that takes a session id, used by
-  Telegram inline buttons where the id is already known.
+  the web dashboard where the id is already known.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from app.core.exceptions import (
     AmbiguousReferenceError,
     AttendanceAlreadyTakenError,
     AttendanceSessionClosedError,
+    ClassNotFoundError,
     EmptyClassError,
     NoActiveAttendanceSessionError,
     StudentNotFoundError,
@@ -52,9 +53,12 @@ from app.schemas.attendance import (
 from app.schemas.common import OperationResult
 from app.services.class_service import ClassService
 from app.services.student_service import StudentService
-from app.utils.datetime_utils import format_date, parse_date, utc_now
+from app.utils.datetime_utils import format_date, parse_date, today, utc_now
 
 logger = get_logger(__name__)
+
+#: Stored on a finalised session when the teaching day was called off.
+CANCELLED_TEACHING_DAY_NOTE = "cancelled"
 
 
 class AttendanceService:
@@ -204,7 +208,7 @@ class AttendanceService:
         student_id: int,
         status: AttendanceStatus,
     ) -> AttendanceSessionRead:
-        """Mark a student by primary key, for Telegram inline buttons.
+        """Mark a student by primary key, for the web dashboard.
 
         Raises:
             NoActiveAttendanceSessionError: If the session is not visible to
@@ -266,9 +270,74 @@ class AttendanceService:
         *,
         default_status: AttendanceStatus = AttendanceStatus.PRESENT,
     ) -> FinishAttendanceOutput:
-        """Finalise a known session, for Telegram inline buttons."""
+        """Finalise a known session, for the web dashboard."""
         session = await self._require_session(teacher_id, session_id)
         return await self._finalise(session, default_status)
+
+    async def complete_teaching_day(
+        self,
+        teacher_id: int,
+        class_id: int,
+        session_date: date | None = None,
+    ) -> FinishAttendanceOutput:
+        """Mark every student present and finalise today's session for a class.
+
+        Opens the session if needed. Students already marked (for example
+        absent) are overwritten to present.
+
+        Raises:
+            ClassNotFoundError: If the class is not owned by this teacher.
+            EmptyClassError: If the class has no students.
+            AttendanceAlreadyTakenError: If the day is already completed.
+        """
+        return await self._close_teaching_day(
+            teacher_id, class_id, AttendanceStatus.PRESENT, session_date
+        )
+
+    async def cancel_teaching_day(
+        self,
+        teacher_id: int,
+        class_id: int,
+        session_date: date | None = None,
+    ) -> FinishAttendanceOutput:
+        """Mark every student absent and finalise today's session as cancelled.
+
+        Raises:
+            ClassNotFoundError: If the class is not owned by this teacher.
+            EmptyClassError: If the class has no students.
+            AttendanceAlreadyTakenError: If the day is already completed.
+        """
+        return await self._close_teaching_day(
+            teacher_id,
+            class_id,
+            AttendanceStatus.ABSENT,
+            session_date,
+            cancelled=True,
+        )
+
+    async def completed_class_days(
+        self, teacher_id: int, start: date, end: date
+    ) -> set[tuple[int, date]]:
+        """``(class_id, date)`` pairs whose attendance is finalised in the range."""
+        completed, _cancelled = await self.finalised_class_days(teacher_id, start, end)
+        return completed
+
+    async def finalised_class_days(
+        self, teacher_id: int, start: date, end: date
+    ) -> tuple[set[tuple[int, date]], set[tuple[int, date]]]:
+        """Return ``(completed, cancelled)`` class-day pairs in the range.
+
+        ``cancelled`` is a subset of ``completed``: the roll-call was saved,
+        with every student marked absent.
+        """
+        rows = await self._attendance.list_completed_days_in_range(teacher_id, start, end)
+        completed = {(class_id, day) for class_id, day, _note in rows}
+        cancelled = {
+            (class_id, day)
+            for class_id, day, note in rows
+            if note == CANCELLED_TEACHING_DAY_NOTE
+        }
+        return completed, cancelled
 
     async def cancel_attendance(
         self,
@@ -284,7 +353,7 @@ class AttendanceService:
         return await self._cancel(session)
 
     async def cancel_session(self, teacher_id: int, session_id: int) -> OperationResult:
-        """Abandon a known session, for Telegram inline buttons."""
+        """Abandon a known session, for the web dashboard."""
         session = await self._require_session(teacher_id, session_id)
         return await self._cancel(session)
 
@@ -328,7 +397,7 @@ class AttendanceService:
         return await self.build_session_read(session, classroom.name)
 
     async def get_session_view(self, teacher_id: int, session_id: int) -> AttendanceSessionRead:
-        """Render a session by id, for refreshing the Telegram keyboard.
+        """Render a session by id, for refreshing the attendance board.
 
         Unlike :meth:`_require_session` this tolerates a closed session, since
         the keyboard still has to be redrawn (without buttons) after finishing.
@@ -430,6 +499,40 @@ class AttendanceService:
         )
 
     # ------------------------------------------------------------ internals --
+
+    async def _close_teaching_day(
+        self,
+        teacher_id: int,
+        class_id: int,
+        status: AttendanceStatus,
+        session_date: date | None = None,
+        *,
+        cancelled: bool = False,
+    ) -> FinishAttendanceOutput:
+        """Open today's session if needed, mark the whole roster, and finalise."""
+        classroom = await self._classes.get_by_id(class_id)
+        if classroom is None or classroom.teacher_id != teacher_id:
+            raise ClassNotFoundError("I couldn't find that class.")
+        day = session_date or today()
+        started = await self.start_attendance(
+            teacher_id,
+            StartAttendanceInput(
+                class_name=classroom.name,
+                session_date=day.isoformat(),
+            ),
+        )
+        session = await self._require_session(teacher_id, started.session.session_id)
+        roster = await self._students.list_for_class(session.class_id)
+        await self._mark_all(session, roster, status)
+        result = await self._finalise(session, status)
+        if cancelled:
+            session.note = CANCELLED_TEACHING_DAY_NOTE
+            await self._attendance.flush()
+            result.message = (
+                f"Cancelled {result.class_name} on {format_date(session.session_date)}: "
+                f"every student marked absent."
+            )
+        return result
 
     async def _finalise(
         self, session: AttendanceSession, default_status: AttendanceStatus
@@ -543,6 +646,16 @@ class AttendanceService:
             record.note = note
         await self._attendance.flush()
         return record
+
+    async def _mark_all(
+        self,
+        session: AttendanceSession,
+        roster: list[Student],
+        status: AttendanceStatus,
+    ) -> None:
+        """Set every student in ``roster`` to ``status``, overwriting prior marks."""
+        for student in roster:
+            await self._apply_status(session, student, status, None)
 
     async def _mark_unmarked(
         self,

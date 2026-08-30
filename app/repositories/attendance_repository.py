@@ -169,6 +169,26 @@ class AttendanceRepository(BaseRepository[AttendanceSession]):
         )
         return list(result)
 
+    async def list_completed_days_in_range(
+        self, teacher_id: int, start: date, end: date
+    ) -> list[tuple[int, date, str | None]]:
+        """``(class_id, date, note)`` for finalised teaching days in ``start``..``end``."""
+        result = await self.session.execute(
+            select(
+                AttendanceSession.class_id,
+                AttendanceSession.session_date,
+                AttendanceSession.note,
+            )
+            .join(Classroom, AttendanceSession.class_id == Classroom.id)
+            .where(
+                Classroom.teacher_id == teacher_id,
+                AttendanceSession.status == AttendanceSessionStatus.COMPLETED,
+                AttendanceSession.session_date >= start,
+                AttendanceSession.session_date <= end,
+            )
+        )
+        return [(class_id, day, note) for class_id, day, note in result.all()]
+
     # ------------------------------------------------------------- records --
 
     async def get_record(self, session_id: int, student_id: int) -> AttendanceRecord | None:

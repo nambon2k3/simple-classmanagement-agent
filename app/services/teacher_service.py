@@ -12,17 +12,16 @@ from app.schemas.teacher import TeacherIdentity
 logger = get_logger(__name__)
 
 #: Sentinel ``telegram_id`` for a local administrator created by the web
-#: dashboard when the database has no teachers yet.  Real Telegram user ids are
-#: always positive, so this never collides with a bot account.
+#: dashboard when the database has no teachers yet.
 LOCAL_ADMIN_TELEGRAM_ID = 0
 
 
 class TeacherService:
     """Ownership boundary for teacher accounts.
 
-    Telegram onboarding still goes through :meth:`get_or_create`.  The web
-    dashboard uses :meth:`ensure_administrator`, which attaches to an existing
-    teacher (so bot-created data is visible) or creates a local admin.
+    The web dashboard uses :meth:`ensure_administrator`, which attaches to an
+    existing teacher or creates a local admin.  :meth:`get_or_create` is the
+    general-purpose onboarding path used by tests and external integrations.
     """
 
     def __init__(
@@ -34,23 +33,20 @@ class TeacherService:
 
         Args:
             teacher_repository: Access to the ``teachers`` table.
-            settings: Configuration holding the optional allow-list.
+            settings: Configuration.
         """
         self._teachers = teacher_repository
         self._settings = settings or get_settings()
 
     async def get_or_create(self, identity: TeacherIdentity) -> Teacher:
-        """Return the teacher for a Telegram user, creating them on first use.
+        """Return the teacher for an identity, creating them on first use.
 
-        Profile fields are refreshed on every call so a renamed Telegram
-        account does not go stale in the database.
+        Profile fields are refreshed on every call so a renamed account does
+        not go stale in the database.
 
         Raises:
-            PermissionDeniedError: If an allow-list is configured and this user
-                is not on it, or if the account has been deactivated.
+            PermissionDeniedError: If the account has been deactivated.
         """
-        self._assert_allowed(identity.telegram_id)
-
         teacher = await self._teachers.get_by_telegram_id(identity.telegram_id)
         if teacher is None:
             teacher = await self._teachers.add(
@@ -79,10 +75,9 @@ class TeacherService:
     async def ensure_administrator(self) -> Teacher:
         """Return the teacher the web dashboard should operate as.
 
-        Prefers the earliest active teacher so existing classes created via the
-        bot (or a previous dashboard session) stay in view.  When the table is
-        empty, creates a local administrator.  The Telegram allow-list does not
-        apply: this is a local console, not a bot user.
+        Prefers the earliest active teacher so existing classes created during
+        a previous session stay in view.  When the table is empty, creates a
+        local administrator.
         """
         existing = [row for row in await self._teachers.list_all() if row.is_active]
         if existing:
@@ -97,12 +92,3 @@ class TeacherService:
         )
         logger.info("Local administrator created", extra={"teacher_id": teacher.id})
         return teacher
-
-    def _assert_allowed(self, telegram_id: int) -> None:
-        """Enforce the optional allow-list from configuration."""
-        allowed = self._settings.telegram_allowed_user_ids
-        if allowed and telegram_id not in allowed:
-            logger.warning("Rejected unlisted Telegram user", extra={"telegram_id": telegram_id})
-            raise PermissionDeniedError(
-                "This bot is private. Ask the administrator to grant you access."
-            )

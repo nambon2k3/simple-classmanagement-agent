@@ -18,7 +18,6 @@ _NOISY_LOGGERS: tuple[tuple[str, int], ...] = (
     ("httpx", logging.WARNING),
     ("httpcore", logging.WARNING),
     ("hpack", logging.WARNING),
-    ("telegram.ext.Application", logging.INFO),
     ("apscheduler", logging.WARNING),
     ("aiosqlite", logging.WARNING),
 )

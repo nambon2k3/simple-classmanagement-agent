@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class Teacher(IdMixin, TimestampMixin, Base):
-    """A bot user who owns classes.
+    """A user who owns classes.
 
     The teacher is the ownership root of the data model: every class, student
     and attendance record is reachable from exactly one teacher, and every
@@ -24,7 +24,7 @@ class Teacher(IdMixin, TimestampMixin, Base):
 
     __tablename__ = "teachers"
 
-    #: Telegram user id.  Telegram ids exceed 32 bits, hence ``BigInteger``.
+    #: External user id, kept as ``BigInteger`` for historical compatibility.
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     username: Mapped[str | None] = mapped_column(String(64), default=None)
@@ -42,5 +42,5 @@ class Teacher(IdMixin, TimestampMixin, Base):
 
     @property
     def display_name(self) -> str:
-        """Preferred way to address the teacher in bot replies."""
+        """Preferred way to address the teacher."""
         return self.full_name or (f"@{self.username}" if self.username else "teacher")

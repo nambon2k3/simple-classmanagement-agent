@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, String, Text, text
+from sqlalchemy import ForeignKey, Index, LargeBinary, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, BigIntPk, IdMixin, TimestampMixin
@@ -46,6 +46,10 @@ class Classroom(IdMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     #: Amount charged per student for each day they attend (present or late), in VND.
     daily_tuition_fee: Mapped[int] = mapped_column(default=0, nullable=False, server_default="0")
+    #: MIME type of :attr:`icon_data`, or ``None`` when no image has been uploaded.
+    icon_mime: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: Uploaded class image.  Deferred so listing classes does not load blobs.
+    icon_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None, deferred=True)
 
     teacher: Mapped[Teacher] = relationship(back_populates="classes", lazy="raise_on_sql")
     students: Mapped[list[Student]] = relationship(

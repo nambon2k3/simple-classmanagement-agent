@@ -9,6 +9,7 @@ handlers contain no error mapping of their own.
 
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date, time
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -27,7 +28,7 @@ from app.schemas.classroom import (
     RenameClassInput,
 )
 from app.schemas.reports import ReportPeriod
-from app.schemas.schedule import ScheduleOccurrence
+from app.schemas.schedule import ScheduleOccurrence, TodayClassRead, TodaySlot
 from app.schemas.student import (
     AddStudentInput,
     ImportStudentRow,
@@ -46,7 +47,6 @@ from app.schemas.tuition import (
     TuitionReportOutput,
     TuitionStatusSummary,
 )
-from app.utils.class_icons import class_icon_data_uri, icon_dir, save_class_icon
 from app.utils.datetime_utils import today
 from app.utils.roster_file import RosterFileError, parse_roster_file
 from app.web.runtime import WEB_CHAT_ID, get_web_runtime
@@ -131,6 +131,12 @@ class MarkCompletedRequest(BaseModel):
     student_id: int
 
 
+class CompleteDayRequest(BaseModel):
+    """Body for marking every student present and finishing today's session."""
+
+    class_id: int
+
+
 class ChatRequest(BaseModel):
     """Body carrying one natural-language message for the assistant."""
 
@@ -160,13 +166,7 @@ async def list_classes(ctx: AdminContext) -> list[dict[str, object]]:
     """Every class the administrator owns, with icon availability."""
     services, teacher = ctx
     result = await services.classes.list_classes(teacher.id)
-    return [
-        {
-            **item.model_dump(),
-            "has_icon": class_icon_data_uri(item.id) is not None,
-        }
-        for item in result.classes
-    ]
+    return [item.model_dump() for item in result.classes]
 
 
 @router.post("/classes", status_code=status.HTTP_201_CREATED)
@@ -225,34 +225,31 @@ async def delete_class(payload: DeleteClassInput, ctx: AdminContext) -> dict[str
 
 
 @router.get("/classes/{class_id}/icon")
-async def get_class_icon(class_id: int) -> Response:
-    """Serve the uploaded rail icon for a class, or 404 when there is none."""
-    for suffix, mime in (
-        (".png", "image/png"),
-        (".jpg", "image/jpeg"),
-        (".jpeg", "image/jpeg"),
-        (".webp", "image/webp"),
-        (".gif", "image/gif"),
-    ):
-        path = icon_dir() / f"{class_id}{suffix}"
-        if path.is_file():
-            return Response(content=path.read_bytes(), media_type=mime)
-    return Response(status_code=status.HTTP_404_NOT_FOUND)
+async def get_class_icon(class_id: int, ctx: AdminContext) -> Response:
+    """Serve the uploaded image for a class, or 404 when there is none."""
+    services, teacher = ctx
+    image = await services.classes.get_class_icon(teacher.id, class_id)
+    if image is None:
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+    payload, mime = image
+    return Response(content=payload, media_type=mime)
 
 
 @router.post("/classes/{class_id}/icon")
 async def upload_class_icon(
     class_id: int,
     request: Request,
+    ctx: AdminContext,
     filename: str = Query(description="Original file name, used to pick the image type."),
 ) -> dict[str, object]:
-    """Replace a class's rail icon with the uploaded image bytes."""
+    """Replace a class's image in the database (up to 10 MB)."""
+    services, teacher = ctx
     data = await request.body()
     try:
-        save_class_icon(class_id, filename, data)
+        await services.classes.set_class_icon(teacher.id, class_id, filename, data)
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
-    return {"message": "Icon updated."}
+    return {"message": "Image updated."}
 
 
 @router.post("/classes/{class_id}/roster")
@@ -417,6 +414,38 @@ async def finish_attendance(payload: FinishRequest, ctx: AdminContext) -> dict[s
     }
 
 
+@router.post("/attendance/complete-day")
+async def complete_teaching_day(
+    payload: CompleteDayRequest, ctx: AdminContext
+) -> dict[str, object]:
+    """Mark every student present and finish today's teaching day for a class."""
+    services, teacher = ctx
+    result = await services.attendance.complete_teaching_day(teacher.id, payload.class_id)
+    return {
+        "message": result.message,
+        "class_name": result.class_name,
+        "session_date": result.session_date.isoformat(),
+        "present": result.summary.present,
+        "absent": result.summary.absent,
+    }
+
+
+@router.post("/attendance/cancel-day")
+async def cancel_teaching_day(
+    payload: CompleteDayRequest, ctx: AdminContext
+) -> dict[str, object]:
+    """Mark every student absent and finish today's teaching day as cancelled."""
+    services, teacher = ctx
+    result = await services.attendance.cancel_teaching_day(teacher.id, payload.class_id)
+    return {
+        "message": result.message,
+        "class_name": result.class_name,
+        "session_date": result.session_date.isoformat(),
+        "present": result.summary.present,
+        "absent": result.summary.absent,
+    }
+
+
 @router.post("/attendance/cancel")
 async def cancel_attendance(payload: SessionRequest, ctx: AdminContext) -> dict[str, object]:
     """Abandon a session without finalising it."""
@@ -552,7 +581,12 @@ async def schedule_month(
 ) -> list[ScheduleOccurrence]:
     """Every scheduled occurrence in one month, across all classes."""
     services, teacher = ctx
-    return await services.schedule.month_occurrences(teacher.id, year, month)
+    occurrences = await services.schedule.month_occurrences(teacher.id, year, month)
+    last_day = monthrange(year, month)[1]
+    completed, cancelled = await services.attendance.finalised_class_days(
+        teacher.id, date(year, month, 1), date(year, month, last_day)
+    )
+    return _with_completion(occurrences, completed, cancelled)
 
 
 # ------------------------------------------------------------------- dashboard
@@ -563,6 +597,22 @@ async def dashboard_summary(ctx: AdminContext) -> TuitionStatusSummary:
     """Completed versus unpaid tuition across every class."""
     services, teacher = ctx
     return await services.tuition.status_summary(teacher.id)
+
+
+@router.get("/dashboard/today")
+async def dashboard_today(ctx: AdminContext) -> list[TodayClassRead]:
+    """Classes scheduled today, with whether their teaching day is finished."""
+    services, teacher = ctx
+    day = today()
+    occurrences = [
+        item
+        for item in await services.schedule.month_occurrences(teacher.id, day.year, day.month)
+        if item.session_date == day
+    ]
+    completed, cancelled = await services.attendance.finalised_class_days(teacher.id, day, day)
+    listed = await services.classes.list_classes(teacher.id)
+    student_counts = {item.id: item.student_count for item in listed.classes}
+    return _today_class_rows(occurrences, completed, cancelled, student_counts)
 
 
 @router.get("/activity")
@@ -618,3 +668,48 @@ async def chat_board(ctx: AdminContext) -> dict[str, object] | None:
         except AppError:
             session = None
     return session.model_dump(mode="json") if session else None
+
+
+def _with_completion(
+    occurrences: list[ScheduleOccurrence],
+    completed: set[tuple[int, date]],
+    cancelled: set[tuple[int, date]],
+) -> list[ScheduleOccurrence]:
+    """Copy each occurrence with finished-day flags from attendance sessions."""
+    return [
+        item.model_copy(
+            update={
+                "completed": (item.class_id, item.session_date) in completed,
+                "cancelled": (item.class_id, item.session_date) in cancelled,
+            }
+        )
+        for item in occurrences
+    ]
+
+
+def _today_class_rows(
+    occurrences: list[ScheduleOccurrence],
+    completed: set[tuple[int, date]],
+    cancelled: set[tuple[int, date]],
+    student_counts: dict[int, int],
+) -> list[TodayClassRead]:
+    """Collapse same-class slots on one day into a single dashboard row."""
+    rows: dict[int, TodayClassRead] = {}
+    for item in occurrences:
+        row = rows.get(item.class_id)
+        if row is None:
+            key = (item.class_id, item.session_date)
+            row = TodayClassRead(
+                class_id=item.class_id,
+                class_name=item.class_name,
+                slots=[],
+                completed=key in completed,
+                cancelled=key in cancelled,
+                student_count=student_counts.get(item.class_id, 0),
+            )
+            rows[item.class_id] = row
+        row.slots.append(
+            TodaySlot(start_time=item.start_time, end_time=item.end_time, kind=item.kind)
+        )
+    return list(rows.values())
+

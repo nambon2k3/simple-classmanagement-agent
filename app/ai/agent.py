@@ -78,7 +78,7 @@ class AgentReply:
     #: Names of the tools that ran, in order.  Useful for logs and tests.
     tool_calls: list[str] = field(default_factory=list)
     #: Side-channel data published by handlers, such as an attendance session
-    #: that the Telegram layer should render as an inline keyboard.
+    #: that the presentation layer should render.
     emitted: dict[str, Any] = field(default_factory=dict)
     #: Class the conversation ended up focused on.
     focus_class_id: int | None = None

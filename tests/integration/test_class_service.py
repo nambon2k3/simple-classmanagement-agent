@@ -118,3 +118,19 @@ async def test_class_info_reports_attendance_activity(services, teacher, classro
     assert after.total_sessions == 1
     assert after.has_open_session is True
     assert after.last_session_date is not None
+
+
+async def test_class_image_is_stored_on_the_class_row(services, teacher, classroom):
+    assert classroom.has_icon is False
+    await services.classes.set_class_icon(teacher.id, classroom.id, "icon.png", b"\x89PNG")
+    listed = await services.classes.list_classes(teacher.id)
+    assert listed.classes[0].has_icon is True
+    image = await services.classes.get_class_icon(teacher.id, classroom.id)
+    assert image == (b"\x89PNG", "image/png")
+
+
+async def test_class_image_rejects_an_unknown_type(services, teacher, classroom):
+    with pytest.raises(ValueError, match="PNG"):
+        await services.classes.set_class_icon(teacher.id, classroom.id, "icon.txt", b"hello")
+    assert await services.classes.get_class_icon(teacher.id, classroom.id) is None
+

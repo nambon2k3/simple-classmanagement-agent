@@ -14,12 +14,12 @@ class TeacherRepository(BaseRepository[Teacher]):
     model = Teacher
 
     async def get_by_telegram_id(self, telegram_id: int) -> Teacher | None:
-        """Look up the teacher behind a Telegram user id.
+        """Look up the teacher behind an external user id.
 
         Args:
-            telegram_id: The Telegram account id of the sender.
+            telegram_id: The external account id.
 
         Returns:
-            The matching teacher, or ``None`` if they have never used the bot.
+            The matching teacher, or ``None`` if they have not been onboarded.
         """
         return await self.session.scalar(select(Teacher).where(Teacher.telegram_id == telegram_id))

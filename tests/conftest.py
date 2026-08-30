@@ -17,10 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 TEST_ENVIRONMENT = {
     "ENVIRONMENT": "local",
     "TIMEZONE": "UTC",
-    "TELEGRAM_BOT_TOKEN": "test-telegram-token",
     "GROQ_API_KEY": "test-groq-key",
     "GROQ_MODEL": "llama-3.3-70b-versatile",
-    "TELEGRAM_ALLOWED_USER_IDS": "[]",
     "LOG_LEVEL": "WARNING",
 }
 

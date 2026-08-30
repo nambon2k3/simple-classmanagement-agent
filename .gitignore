@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Uploaded class rail icons
+# Uploaded class images (legacy disk path; images now live in Postgres)
 data/class-icons/
 
 # Python

@@ -1,10 +1,11 @@
-"""Class rail avatars: an uploaded image, or the first two characters of the name."""
+"""Class image helpers: initials fallback and upload validation.
+
+Image bytes themselves are stored on the ``classes`` row in PostgreSQL, so they
+survive container rebuilds with the existing ``postgres-data`` volume.
+"""
 
 from __future__ import annotations
 
-import base64
-import os
-import tempfile
 from pathlib import Path
 
 _MIME = {
@@ -14,7 +15,7 @@ _MIME = {
     ".webp": "image/webp",
     ".gif": "image/gif",
 }
-_MAX_BYTES = 512_000
+_MAX_BYTES = 10_485_760  # 10 MB
 
 
 def class_initials(name: str) -> str:
@@ -25,49 +26,18 @@ def class_initials(name: str) -> str:
     return compact[:2].upper()
 
 
-def icon_dir() -> Path:
-    """Directory that stores uploaded class icons."""
-    configured = os.environ.get("CLASS_ICON_DIR")
-    if configured:
-        path = Path(configured)
-    else:
-        path = Path(__file__).resolve().parents[2] / "data" / "class-icons"
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        path = Path(tempfile.gettempdir()) / "class-icons"
-        path.mkdir(parents=True, exist_ok=True)
-    return path
+def validate_class_image(filename: str, data: bytes) -> str:
+    """Return the MIME type for a valid class image upload.
 
-
-def class_icon_data_uri(class_id: int, *, directory: Path | None = None) -> str | None:
-    """Return a data URI for the class icon, if one has been uploaded."""
-    folder = directory or icon_dir()
-    for suffix, mime in _MIME.items():
-        path = folder / f"{class_id}{suffix}"
-        if path.is_file():
-            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-            return f"data:{mime};base64,{encoded}"
-    return None
-
-
-def save_class_icon(
-    class_id: int,
-    filename: str,
-    data: bytes,
-    *,
-    directory: Path | None = None,
-) -> None:
-    """Replace any existing icon for this class with the uploaded file."""
+    Raises:
+        ValueError: If the type is unsupported, empty, or larger than 10 MB.
+    """
     suffix = Path(filename).suffix.lower()
-    if suffix not in _MIME:
+    mime = _MIME.get(suffix)
+    if mime is None:
         raise ValueError("Please upload a PNG, JPEG, WEBP or GIF image.")
+    if not data:
+        raise ValueError("Please upload a non-empty image.")
     if len(data) > _MAX_BYTES:
-        raise ValueError("Please keep the class icon under 512 KB.")
-    folder = directory or icon_dir()
-    folder.mkdir(parents=True, exist_ok=True)
-    for old_suffix in _MIME:
-        old = folder / f"{class_id}{old_suffix}"
-        if old.exists():
-            old.unlink()
-    (folder / f"{class_id}{suffix}").write_bytes(data)
+        raise ValueError("Please keep the image under 10 MB.")
+    return mime

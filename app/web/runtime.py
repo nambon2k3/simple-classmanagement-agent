@@ -15,7 +15,7 @@ from app.ai.memory import InMemoryConversationStore
 from app.ai.tools.definitions import build_registry
 from app.core.config import Settings, get_settings
 
-#: Conversation key for the web dashboard chat.  Isolated from Telegram chats.
+#: Conversation key for the web dashboard chat.
 WEB_CHAT_ID = 1
 
 
